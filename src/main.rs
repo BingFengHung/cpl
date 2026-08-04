@@ -24,8 +24,12 @@ fn main() -> Result<()> {
         Some(Commands::Pin { id, note: _ }) => {
             handle_pin(&db, *id)?;
         }
-        Some(Commands::Scan { reindex: _ }) => {
+        Some(Commands::Scan { reindex }) => {
             println!("🔍 正在掃描本機 Copilot CLI 與 AGY CLI 對話日誌...");
+            if *reindex {
+                println!("🧹 清空舊索引資料庫，重新建立精準對話紀錄...");
+                let _ = db.clear_all();
+            }
             let count = ingestor::scan_and_ingest(&db)?;
             println!("✅ 成功索引並更新 {} 筆全新歷史解法！", count);
         }

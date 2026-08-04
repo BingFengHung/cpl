@@ -186,6 +186,12 @@ impl Database {
         Ok(new_pinned == 1)
     }
 
+    pub fn clear_all(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM solutions", [])?;
+        let _ = self.conn.execute("DELETE FROM solutions_fts", []);
+        Ok(())
+    }
+
     pub fn get_latest_id(&self) -> Result<Option<i64>> {
         let mut stmt = self.conn.prepare("SELECT id FROM solutions ORDER BY id DESC LIMIT 1")?;
         let mut rows = stmt.query([])?;
