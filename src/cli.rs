@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "cpl",
     author = "Copilot CLI Plus Developer",
-    version = "0.1.7",
+    version = "0.1.8",
     about = "Copilot CLI Plus (cpl): AI Solution Recall, Indexing & Self-Updating CLI Assistant"
 )]
 pub struct Cli {
@@ -44,9 +44,16 @@ pub enum Commands {
 
     /// Scan local Copilot CLI & AGY CLI transcripts and update search index
     Scan {
+        /// Optional custom directory or file path to scan
+        path: Option<String>,
+
         /// Force re-indexing all transcript logs from scratch
         #[arg(short, long)]
         reindex: bool,
+
+        /// Print verbose debug details of all checked paths and files
+        #[arg(short, long)]
+        verbose: bool,
     },
 
     /// Check for updates and self-update to the latest release from GitHub

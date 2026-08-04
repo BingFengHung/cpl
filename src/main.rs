@@ -15,7 +15,7 @@ fn main() -> Result<()> {
     let db = Database::open()?;
 
     // Auto scan local Copilot & AGY logs on startup to ensure Zero Cold Start
-    let _ = ingestor::scan_and_ingest(&db);
+    let _ = ingestor::scan_and_ingest(&db, None, false);
 
     match &cli.command {
         Some(Commands::Recall { query, local, pinned, text }) => {
@@ -24,13 +24,13 @@ fn main() -> Result<()> {
         Some(Commands::Pin { id, note: _ }) => {
             handle_pin(&db, *id)?;
         }
-        Some(Commands::Scan { reindex }) => {
+        Some(Commands::Scan { path, reindex, verbose }) => {
             println!("🔍 正在掃描本機 Copilot CLI 與 AGY CLI 對話日誌...");
             if *reindex {
                 println!("🧹 清空舊索引資料庫，重新建立精準對話紀錄...");
                 let _ = db.clear_all();
             }
-            let count = ingestor::scan_and_ingest(&db)?;
+            let count = ingestor::scan_and_ingest(&db, path.as_deref(), *verbose)?;
             println!("✅ 成功索引並更新 {} 筆全新歷史解法！", count);
         }
         Some(Commands::Update { force }) => {

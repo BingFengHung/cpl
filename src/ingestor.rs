@@ -4,15 +4,37 @@ use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub fn scan_and_ingest(db: &Database) -> Result<usize> {
-    let search_paths = get_log_directories();
+pub fn scan_and_ingest(db: &Database, custom_path: Option<&str>, verbose: bool) -> Result<usize> {
+    let search_paths = if let Some(cp) = custom_path {
+        vec![PathBuf::from(cp)]
+    } else {
+        get_log_directories()
+    };
+
     let mut ingested_count = 0;
 
     for dir in search_paths {
-        if dir.exists() && dir.is_dir() {
-            if let Ok(count) = scan_directory(&dir, db) {
-                ingested_count += count;
+        if verbose {
+            println!("🔍 正在檢查路徑: {:?}", dir);
+        }
+        if dir.exists() {
+            if dir.is_dir() {
+                if let Ok(count) = scan_directory(&dir, db, verbose) {
+                    ingested_count += count;
+                }
+            } else if is_transcript_file(&dir) {
+                if let Ok(solutions) = parse_transcript_file(&dir) {
+                    for sol in solutions {
+                        if !sol.prompt_summary.trim().is_empty() {
+                            if db.insert_solution(&sol).is_ok() {
+                                ingested_count += 1;
+                            }
+                        }
+                    }
+                }
             }
+        } else if verbose {
+            println!("   ⚠️ 路徑不存在或無法存取: {:?}", dir);
         }
     }
 
@@ -29,6 +51,7 @@ fn get_log_directories() -> Vec<PathBuf> {
         dirs_list.push(home.join(".github-copilot"));
         dirs_list.push(home.join(".config").join("gh"));
         dirs_list.push(home.join(".config").join("gh").join("copilot"));
+        dirs_list.push(home.join(".config").join("gh-copilot"));
 
         // agy CLI (Google Antigravity CLI) locations
         dirs_list.push(home.join(".gemini").join("antigravity-cli").join("brain"));
@@ -43,6 +66,7 @@ fn get_log_directories() -> Vec<PathBuf> {
                 dirs_list.push(appdata_path.join("antigravity-cli"));
                 dirs_list.push(appdata_path.join("GitHub CLI"));
                 dirs_list.push(appdata_path.join("gh"));
+                dirs_list.push(appdata_path.join("github-copilot-cli"));
             }
             if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
                 let localappdata_path = PathBuf::from(&localappdata);
@@ -50,23 +74,28 @@ fn get_log_directories() -> Vec<PathBuf> {
                 dirs_list.push(localappdata_path.join("antigravity-cli"));
                 dirs_list.push(localappdata_path.join("GitHub CLI"));
                 dirs_list.push(localappdata_path.join("gh"));
+                dirs_list.push(localappdata_path.join("github-copilot-cli"));
+                dirs_list.push(localappdata_path.join("github-copilot-chat"));
             }
         }
     }
     dirs_list
 }
 
-fn scan_directory(dir: &Path, db: &Database) -> Result<usize> {
+fn scan_directory(dir: &Path, db: &Database, verbose: bool) -> Result<usize> {
     let mut count = 0;
 
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if let Ok(sub_count) = scan_directory(&path, db) {
+                if let Ok(sub_count) = scan_directory(&path, db, verbose) {
                     count += sub_count;
                 }
             } else if is_transcript_file(&path) {
+                if verbose {
+                    println!("   📄 正在解析對話檔: {:?}", path);
+                }
                 if let Ok(solutions) = parse_transcript_file(&path) {
                     for sol in solutions {
                         if !sol.prompt_summary.trim().is_empty() {
