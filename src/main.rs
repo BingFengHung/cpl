@@ -14,8 +14,10 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let db = Database::open()?;
 
-    // Auto scan local Copilot & AGY logs on startup to ensure Zero Cold Start
-    let _ = ingestor::scan_and_ingest(&db, None, false);
+    // Auto scan local Copilot & AGY logs ONLY on first run when DB is empty for instant startup
+    if db.is_empty()? {
+        let _ = ingestor::scan_and_ingest(&db, None, false);
+    }
 
     match &cli.command {
         Some(Commands::Recall { query, local, pinned, text }) => {

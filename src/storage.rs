@@ -85,14 +85,30 @@ impl Database {
         Ok(())
     }
 
-    pub fn insert_solution(&self, solution: &Solution) -> Result<i64> {
-        let commands_json = serde_json::to_string(&solution.commands)?;
-        let snippets_json = serde_json::to_string(&solution.code_snippets)?;
+    pub fn is_empty(&self) -> Result<bool> {
+        let mut stmt = self.conn.prepare("SELECT COUNT(*) FROM solutions")?;
+        let count: i64 = stmt.query_row([], |r| r.get(0))?;
+        Ok(count == 0)
+    }
 
-        self.conn.execute(
+    pub fn insert_solutions_batch(&self, solutions: &[Solution]) -> Result<usize> {
+        if solutions.is_empty() {
+            return Ok(0);
+        }
+
+        self.conn.execute("BEGIN TRANSACTION;", [])?;
+
+        let mut stmt = self.conn.prepare(
             "INSERT OR IGNORE INTO solutions (prompt_summary, commands, code_snippets, project_path, git_repo, is_pinned, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+        )?;
+
+        let mut inserted = 0;
+        for solution in solutions {
+            let commands_json = serde_json::to_string(&solution.commands)?;
+            let snippets_json = serde_json::to_string(&solution.code_snippets)?;
+
+            let res = stmt.execute(params![
                 solution.prompt_summary,
                 commands_json,
                 snippets_json,
@@ -100,10 +116,17 @@ impl Database {
                 solution.git_repo,
                 solution.is_pinned as i32,
                 solution.timestamp,
-            ],
-        )?;
+            ]);
 
-        Ok(self.conn.last_insert_rowid())
+            if let Ok(changes) = res {
+                if changes > 0 {
+                    inserted += 1;
+                }
+            }
+        }
+
+        self.conn.execute("COMMIT;", [])?;
+        Ok(inserted)
     }
 
     pub fn search(
@@ -136,6 +159,7 @@ impl Database {
             }
         }
 
+        // Limit results to top 100 for instant UI rendering
         sql.push_str(" ORDER BY timestamp DESC LIMIT 100");
 
         let mut stmt = self.conn.prepare(&sql)?;

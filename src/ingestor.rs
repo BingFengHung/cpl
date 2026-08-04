@@ -11,7 +11,7 @@ pub fn scan_and_ingest(db: &Database, custom_path: Option<&str>, verbose: bool) 
         get_log_directories()
     };
 
-    let mut ingested_count = 0;
+    let mut all_solutions = Vec::new();
 
     for dir in search_paths {
         if verbose {
@@ -19,16 +19,12 @@ pub fn scan_and_ingest(db: &Database, custom_path: Option<&str>, verbose: bool) 
         }
         if dir.exists() {
             if dir.is_dir() {
-                if let Ok(count) = scan_directory(&dir, db, verbose) {
-                    ingested_count += count;
-                }
+                scan_directory_collect(&dir, &mut all_solutions, verbose);
             } else if is_transcript_file(&dir) {
                 if let Ok(solutions) = parse_transcript_file(&dir) {
                     for sol in solutions {
                         if !sol.prompt_summary.trim().is_empty() {
-                            if db.insert_solution(&sol).is_ok() {
-                                ingested_count += 1;
-                            }
+                            all_solutions.push(sol);
                         }
                     }
                 }
@@ -38,7 +34,12 @@ pub fn scan_and_ingest(db: &Database, custom_path: Option<&str>, verbose: bool) 
         }
     }
 
-    Ok(ingested_count)
+    if verbose {
+        println!("⚡ 正在批次寫入 {} 筆資料至 SQLite 資料庫...", all_solutions.len());
+    }
+
+    let inserted = db.insert_solutions_batch(&all_solutions)?;
+    Ok(inserted)
 }
 
 fn get_log_directories() -> Vec<PathBuf> {
@@ -86,16 +87,12 @@ fn get_log_directories() -> Vec<PathBuf> {
     dirs_list
 }
 
-fn scan_directory(dir: &Path, db: &Database, verbose: bool) -> Result<usize> {
-    let mut count = 0;
-
+fn scan_directory_collect(dir: &Path, acc: &mut Vec<Solution>, verbose: bool) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if let Ok(sub_count) = scan_directory(&path, db, verbose) {
-                    count += sub_count;
-                }
+                scan_directory_collect(&path, acc, verbose);
             } else if is_transcript_file(&path) {
                 if verbose {
                     println!("   📄 正在解析對話檔: {:?}", path);
@@ -103,17 +100,13 @@ fn scan_directory(dir: &Path, db: &Database, verbose: bool) -> Result<usize> {
                 if let Ok(solutions) = parse_transcript_file(&path) {
                     for sol in solutions {
                         if !sol.prompt_summary.trim().is_empty() {
-                            if db.insert_solution(&sol).is_ok() {
-                                count += 1;
-                            }
+                            acc.push(sol);
                         }
                     }
                 }
             }
         }
     }
-
-    Ok(count)
 }
 
 fn is_transcript_file(path: &Path) -> bool {
