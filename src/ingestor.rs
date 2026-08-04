@@ -59,12 +59,12 @@ fn scan_directory(dir: &Path, db: &Database) -> Result<usize> {
                     count += sub_count;
                 }
             } else if is_transcript_file(&path) {
-                if let Ok(solution) = parse_transcript_file(&path) {
-                    if !solution.prompt_summary.trim().is_empty()
-                        && (!solution.commands.is_empty() || !solution.code_snippets.is_empty())
-                    {
-                        if db.insert_solution(&solution).is_ok() {
-                            count += 1;
+                if let Ok(solutions) = parse_transcript_file(&path) {
+                    for sol in solutions {
+                        if !sol.prompt_summary.trim().is_empty() {
+                            if db.insert_solution(&sol).is_ok() {
+                                count += 1;
+                            }
                         }
                     }
                 }
@@ -83,13 +83,24 @@ fn is_transcript_file(path: &Path) -> bool {
         || filename.ends_with(".log")
 }
 
-fn parse_transcript_file(path: &Path) -> Result<Solution> {
-    let content = fs::read_to_string(path)?;
-    let mut prompt_summary = String::new();
-    let mut commands = Vec::new();
-    let mut code_snippets = Vec::new();
+fn parse_transcript_file(path: &Path) -> Result<Vec<Solution>> {
+    let raw_file_content = fs::read_to_string(path)?;
+    let mut solutions = Vec::new();
 
-    for line in content.lines() {
+    let mut current_prompt = String::new();
+    let mut current_commands = Vec::new();
+    let mut current_snippets = Vec::new();
+
+    let timestamp = fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
+        .unwrap_or_else(|_| chrono::Utc::now().timestamp());
+
+    let project_path = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "Global".to_string());
+
+    for line in raw_file_content.lines() {
         if line.trim().is_empty() {
             continue;
         }
@@ -97,20 +108,31 @@ fn parse_transcript_file(path: &Path) -> Result<Solution> {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
             let msg_type = val.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
-            // 1. Extract User Prompt (supports <USER_REQUEST> tags and raw prompt)
-            if (msg_type == "USER_INPUT" || prompt_summary.is_empty()) && val.get("content").is_some() {
+            // 1. Detect new USER_INPUT -> Save previous solution turn if exists
+            if msg_type == "USER_INPUT" {
+                if !current_prompt.is_empty() {
+                    solutions.push(Solution {
+                        id: 0,
+                        prompt_summary: current_prompt.clone(),
+                        commands: current_commands.clone(),
+                        code_snippets: current_snippets.clone(),
+                        project_path: project_path.clone(),
+                        git_repo: None,
+                        is_pinned: false,
+                        timestamp,
+                    });
+                    current_commands.clear();
+                    current_snippets.clear();
+                }
+
                 if let Some(raw_prompt) = val.get("content").and_then(|c| c.as_str()) {
-                    let cleaned = extract_clean_prompt(raw_prompt);
-                    if !cleaned.is_empty() && prompt_summary.is_empty() {
-                        prompt_summary = cleaned;
-                    }
+                    current_prompt = extract_clean_prompt(raw_prompt);
                 }
             }
 
-            // 2. Extract Tool Calls / Commands (supports direct CommandLine and nested args.CommandLine)
+            // 2. Extract Tool Calls / Commands
             if let Some(tool_calls) = val.get("tool_calls").and_then(|t| t.as_array()) {
                 for tool in tool_calls {
-                    // Try direct CommandLine or args.CommandLine
                     let raw_cmd = tool
                         .get("CommandLine")
                         .and_then(|c| c.as_str())
@@ -127,44 +149,37 @@ fn parse_transcript_file(path: &Path) -> Result<Solution> {
 
                     if let Some(cmd) = raw_cmd {
                         let clean_cmd = clean_command_str(cmd);
-                        if !clean_cmd.is_empty() && !commands.contains(&clean_cmd) {
-                            commands.push(clean_cmd);
+                        if !clean_cmd.is_empty() && !current_commands.contains(&clean_cmd) {
+                            current_commands.push(clean_cmd);
                         }
                     }
+                }
+            }
+
+            // 3. Extract text content response & code blocks inside JSON `content` field
+            if let Some(text_content) = val.get("content").and_then(|c| c.as_str()) {
+                if msg_type == "PLANNER_RESPONSE" || msg_type == "MODEL" {
+                    extract_code_blocks_from_text(text_content, &mut current_snippets, &mut current_commands);
                 }
             }
         }
     }
 
-    // Fallback code block extraction from content
-    extract_code_blocks(&content, &mut code_snippets, &mut commands);
-
-    if prompt_summary.is_empty() {
-        prompt_summary = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Copilot Session".to_string());
+    // Save final turn
+    if !current_prompt.is_empty() {
+        solutions.push(Solution {
+            id: 0,
+            prompt_summary: current_prompt,
+            commands: current_commands,
+            code_snippets: current_snippets,
+            project_path,
+            git_repo: None,
+            is_pinned: false,
+            timestamp,
+        });
     }
 
-    let timestamp = fs::metadata(path)
-        .and_then(|m| m.modified())
-        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
-        .unwrap_or_else(|_| chrono::Utc::now().timestamp());
-
-    let project_path = std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "Global".to_string());
-
-    Ok(Solution {
-        id: 0,
-        prompt_summary,
-        commands,
-        code_snippets,
-        project_path,
-        git_repo: None,
-        is_pinned: false,
-        timestamp,
-    })
+    Ok(solutions)
 }
 
 fn extract_clean_prompt(raw: &str) -> String {
@@ -181,10 +196,9 @@ fn extract_clean_prompt(raw: &str) -> String {
         return String::new();
     }
 
-    // Return the first meaningful non-empty line
     for line in trimmed.lines() {
         let l = line.trim();
-        if !l.is_empty() && !l.starts_with('<') {
+        if !l.is_empty() && !l.starts_with('<') && !l.starts_with('{') {
             return l.to_string();
         }
     }
@@ -197,33 +211,34 @@ fn clean_command_str(cmd: &str) -> String {
     unescaped.replace("\\\"", "\"").replace("\\\\", "\\")
 }
 
-fn extract_code_blocks(content: &str, snippets: &mut Vec<CodeSnippet>, commands: &mut Vec<String>) {
+fn extract_code_blocks_from_text(text: &str, snippets: &mut Vec<CodeSnippet>, commands: &mut Vec<String>) {
     let mut in_block = false;
     let mut lang = String::new();
     let mut current_block = String::new();
 
-    for line in content.lines() {
-        if line.starts_with("```") {
+    for line in text.lines() {
+        let trimmed_line = line.trim();
+        if trimmed_line.starts_with("```") {
             if in_block {
                 in_block = false;
-                let trimmed = current_block.trim();
-                if !trimmed.is_empty() {
+                let code = current_block.trim();
+                if !code.is_empty() {
                     if lang == "bash" || lang == "sh" || lang == "powershell" || lang == "cmd" {
-                        let clean = clean_command_str(trimmed);
+                        let clean = clean_command_str(code);
                         if !commands.contains(&clean) {
                             commands.push(clean);
                         }
                     } else {
                         snippets.push(CodeSnippet {
                             language: if lang.is_empty() { "text".to_string() } else { lang.clone() },
-                            code: trimmed.to_string(),
+                            code: code.to_string(),
                         });
                     }
                 }
                 current_block.clear();
             } else {
                 in_block = true;
-                lang = line.trim_start_matches("```").trim().to_string();
+                lang = trimmed_line.trim_start_matches("```").trim().to_string();
             }
         } else if in_block {
             current_block.push_str(line);

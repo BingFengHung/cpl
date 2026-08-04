@@ -1,6 +1,6 @@
 [package]
 name = "cpl"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 authors = ["Copilot CLI Plus Developer"]
 description = "Copilot CLI Plus (cpl): AI Solution Recall, Indexing & Self-Updating CLI Assistant"
