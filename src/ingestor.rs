@@ -25,15 +25,21 @@ fn get_log_directories() -> Vec<PathBuf> {
         // GitHub Copilot CLI standard locations
         dirs_list.push(home.join(".config").join("github-copilot"));
         dirs_list.push(home.join(".local").join("share").join("github-copilot"));
+
+        // agy CLI (Google Antigravity CLI) locations
         dirs_list.push(home.join(".gemini").join("antigravity-cli").join("brain"));
+        dirs_list.push(home.join(".config").join("antigravity-cli"));
+        dirs_list.push(home.join(".antigravity"));
 
         // Windows AppData locations
         if cfg!(target_os = "windows") {
             if let Ok(appdata) = std::env::var("APPDATA") {
                 dirs_list.push(PathBuf::from(appdata).join("github-copilot"));
+                dirs_list.push(PathBuf::from(appdata).join("antigravity-cli"));
             }
             if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
                 dirs_list.push(PathBuf::from(localappdata).join("github-copilot"));
+                dirs_list.push(PathBuf::from(localappdata).join("antigravity-cli"));
             }
         }
     }
@@ -77,25 +83,34 @@ fn parse_transcript_file(path: &Path) -> Result<Solution> {
     let mut commands = Vec::new();
     let mut code_snippets = Vec::new();
 
-    // Check if JSON Lines format
+    // Parse JSON Lines format (supports both Copilot CLI and agy CLI transcripts)
     for line in content.lines() {
         if line.trim().is_empty() {
             continue;
         }
 
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-            // Extract user input / prompt
-            if let Some(prompt) = val.get("content").and_then(|c| c.as_str()) {
-                if prompt_summary.is_empty() && prompt.len() > 5 {
-                    prompt_summary = prompt.lines().next().unwrap_or(prompt).to_string();
+            let msg_type = val.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+            // Extract user input / prompt (agy CLI: USER_INPUT)
+            if msg_type == "USER_INPUT" || prompt_summary.is_empty() {
+                if let Some(prompt) = val.get("content").and_then(|c| c.as_str()) {
+                    if prompt_summary.is_empty() && prompt.len() > 2 {
+                        let clean_prompt = prompt.lines().next().unwrap_or(prompt);
+                        if !clean_prompt.starts_with('<') {
+                            prompt_summary = clean_prompt.to_string();
+                        }
+                    }
                 }
             }
 
-            // Extract tool calls / commands
+            // Extract tool calls / commands (agy CLI: run_command)
             if let Some(tool_calls) = val.get("tool_calls").and_then(|t| t.as_array()) {
                 for tool in tool_calls {
                     if let Some(cmd) = tool.get("CommandLine").and_then(|c| c.as_str()) {
-                        commands.push(cmd.to_string());
+                        if !commands.contains(&cmd.to_string()) {
+                            commands.push(cmd.to_string());
+                        }
                     }
                 }
             }

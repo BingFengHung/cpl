@@ -4,7 +4,7 @@
 
 > **零冷啟動 (Zero Cold-Start) 的本機 AI 歷史對話記憶庫與一鍵自我更新助手。**
 
-`cpl` 是一個使用 Rust 開發的高效能 CLI 工具。它能自動將您電腦中過往的 GitHub Copilot CLI 對話紀錄建立為本機 SQLite FTS5 全文檢索索引。讓您無需重新輸入 Prompt 或複製貼上，就能在終端機中 0 秒快速搜尋、預覽與帶入過往成功的 AI 指令與程式碼片段。
+`cpl` 是一個使用 Rust 開發的高效能 CLI 工具。它能自動將您電腦中過往的 **GitHub Copilot CLI** 以及 **Google Antigravity CLI (`agy`)** 對話紀錄建立為本機 SQLite FTS5 全文檢索索引。讓您無需重新輸入 Prompt 或複製貼上，就能在終端機中 0 秒快速搜尋、預覽與帶入過往成功的 AI 指令與程式碼片段。
 
 ---
 
