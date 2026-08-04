@@ -77,29 +77,59 @@ enum UserAction {
 
 fn run_tui_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
-    solutions: &[Solution],
+    all_solutions: &[Solution],
     list_state: &mut ListState,
     _db: &Database,
 ) -> io::Result<Option<UserAction>> {
+    let mut search_query = String::new();
+    let mut filtered_solutions: Vec<Solution> = all_solutions.to_vec();
+
     // Flush leftover input events in stdin buffer (e.g. the Enter key pressed when launching cpl in CMD)
     while event::poll(Duration::from_millis(50)).unwrap_or(false) {
         let _ = event::read();
     }
 
     loop {
+        let current_query = search_query.to_lowercase();
+        filtered_solutions = if current_query.is_empty() {
+            all_solutions.to_vec()
+        } else {
+            all_solutions
+                .iter()
+                .filter(|s| {
+                    s.prompt_summary.to_lowercase().contains(&current_query)
+                        || s.commands.iter().any(|c| c.to_lowercase().contains(&current_query))
+                        || s.code_snippets.iter().any(|snip| snip.code.to_lowercase().contains(&current_query))
+                })
+                .cloned()
+                .collect()
+        };
+
+        if list_state.selected().map_or(false, |i| i >= filtered_solutions.len()) {
+            if filtered_solutions.is_empty() {
+                list_state.select(None);
+            } else {
+                list_state.select(Some(0));
+            }
+        } else if list_state.selected().is_none() && !filtered_solutions.is_empty() {
+            list_state.select(Some(0));
+        }
+
         terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(3), Constraint::Min(10), Constraint::Length(3)].as_ref())
                 .split(f.size());
 
-            // Header
+            // Top Search Input Box
             let header = Paragraph::new(format!(
-                " 🔍 cpl recall - AI 解法與指令記憶庫 (共 {} 筆解法, Enter: 複製, q: 離開)",
-                solutions.len()
+                " 🔍 搜尋 (Search): {}_  (符合 {} / {} 筆, Enter: 複製, Esc: 離開)",
+                search_query,
+                filtered_solutions.len(),
+                all_solutions.len()
             ))
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-            .block(Block::default().borders(Borders::ALL).title(" Copilot Plus "));
+            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .block(Block::default().borders(Borders::ALL).title(" Copilot Plus - 即時搜尋 "));
             f.render_widget(header, chunks[0]);
 
             // Main dual-pane view
@@ -109,7 +139,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                 .split(chunks[1]);
 
             // Left List items
-            let items: Vec<ListItem> = solutions
+            let items: Vec<ListItem> = filtered_solutions
                 .iter()
                 .map(|s| {
                     let pin_icon = if s.is_pinned { "⭐ " } else { "  " };
@@ -132,7 +162,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
 
             // Right Preview Pane
             let selected_idx = list_state.selected().unwrap_or(0);
-            let preview_text = if let Some(sol) = solutions.get(selected_idx) {
+            let preview_text = if let Some(sol) = filtered_solutions.get(selected_idx) {
                 let mut text = format!(
                     "📅 時間: {}\n📂 路徑: {}\n\n💡 執行的關鍵指令:\n",
                     sol.formatted_date(),
@@ -153,7 +183,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                 }
                 text
             } else {
-                "尚無選取的項目".to_string()
+                "尚無符合搜尋條件的解法項目".to_string()
             };
 
             let preview = Paragraph::new(preview_text)
@@ -162,7 +192,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
             f.render_widget(preview, main_chunks[1]);
 
             // Footer / Keybindings help
-            let footer = Paragraph::new(" [↑/↓] 移動選單  |  [Enter] 複製指令/內容  |  [q/Esc] 退出 ")
+            let footer = Paragraph::new(" [直接打字] 即時過濾  |  [↑/↓] 移動選單  |  [Backspace] 刪除  |  [Enter] 複製指令  |  [Esc] 退出 ")
                 .style(Style::default().fg(Color::DarkGray));
             f.render_widget(footer, chunks[2]);
         })?;
@@ -174,11 +204,17 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                 }
 
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
-                    KeyCode::Down | KeyCode::Char('j') => {
+                    KeyCode::Esc => return Ok(None),
+                    KeyCode::Backspace => {
+                        search_query.pop();
+                        list_state.select(Some(0));
+                    }
+                    KeyCode::Down => {
                         let i = match list_state.selected() {
                             Some(i) => {
-                                if i >= solutions.len() - 1 {
+                                if filtered_solutions.is_empty() {
+                                    0
+                                } else if i >= filtered_solutions.len().saturating_sub(1) {
                                     0
                                 } else {
                                     i + 1
@@ -188,11 +224,13 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                         };
                         list_state.select(Some(i));
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
+                    KeyCode::Up => {
                         let i = match list_state.selected() {
                             Some(i) => {
-                                if i == 0 {
-                                    solutions.len() - 1
+                                if filtered_solutions.is_empty() {
+                                    0
+                                } else if i == 0 {
+                                    filtered_solutions.len().saturating_sub(1)
                                 } else {
                                     i - 1
                                 }
@@ -203,7 +241,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                     }
                     KeyCode::Enter => {
                         if let Some(idx) = list_state.selected() {
-                            if let Some(sol) = solutions.get(idx) {
+                            if let Some(sol) = filtered_solutions.get(idx) {
                                 if let Some(cmd) = sol.commands.first() {
                                     return Ok(Some(UserAction::CopyCommand(cmd.clone())));
                                 } else if let Some(snip) = sol.code_snippets.first() {
@@ -213,6 +251,10 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                                 }
                             }
                         }
+                    }
+                    KeyCode::Char(c) => {
+                        search_query.push(c);
+                        list_state.select(Some(0));
                     }
                     _ => {}
                 }
