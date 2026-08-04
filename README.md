@@ -19,7 +19,7 @@
 
 ## 📦 Quick Installation (No Rust Required)
 
-You do **not** need Rust installed locally to run `cpl`! Simply download the precompiled binary for your OS directly from the **[GitHub Releases Page](https://github.com/YOUR_GITHUB_USERNAME/cpl/releases)**.
+You do **not** need Rust installed locally to run `cpl`! Simply download the precompiled binary for your OS directly from the **[GitHub Releases Page](https://github.com/BingFengHung/cpl/releases)**.
 
 ### Windows
 Download `cpl-windows-amd64.exe` from Releases, rename to `cpl.exe`, and add to your System `PATH`.
@@ -27,7 +27,7 @@ Download `cpl-windows-amd64.exe` from Releases, rename to `cpl.exe`, and add to 
 ### Linux / macOS
 ```bash
 # Download binary, make executable, and move to bin path
-curl -L https://github.com/YOUR_GITHUB_USERNAME/cpl/releases/latest/download/cpl-linux-amd64 -o cpl
+curl -L https://github.com/BingFengHung/cpl/releases/latest/download/cpl-linux-amd64 -o cpl
 chmod +x cpl
 sudo mv cpl /usr/local/bin/
 ```

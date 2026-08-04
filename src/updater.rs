@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-const GITHUB_REPO_OWNER: &str = "YOUR_GITHUB_USERNAME";
+const GITHUB_REPO_OWNER: &str = "BingFengHung";
 const GITHUB_REPO_NAME: &str = "cpl";
 
 #[derive(Deserialize, Debug)]

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Copilot CLI Plus Developer"]
 description = "Copilot CLI Plus (cpl): AI Solution Recall, Indexing & Self-Updating CLI Assistant"
-repository = "https://github.com/YOUR_GITHUB_USERNAME/cpl"
+repository = "https://github.com/BingFengHung/cpl"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive", "env"] }
