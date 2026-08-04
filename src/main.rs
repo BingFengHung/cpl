@@ -20,8 +20,10 @@ fn main() -> Result<()> {
     }
 
     match &cli.command {
-        Some(Commands::Recall { query, local, pinned, interactive }) => {
-            handle_recall(&db, query.as_deref(), *local, *pinned, *interactive)?;
+        Some(Commands::Recall { query, local, pinned, text }) => {
+            // Default to interactive TUI menu (interactive = true) unless --text is passed
+            let interactive = !(*text);
+            handle_recall(&db, query.as_deref(), *local, *pinned, interactive)?;
         }
         Some(Commands::Pin { id, note: _ }) => {
             handle_pin(&db, *id)?;
@@ -42,8 +44,8 @@ fn main() -> Result<()> {
             println!("cpl version {}", env!("CARGO_PKG_VERSION"));
         }
         None => {
-            // Default behavior when typing just `cpl`
-            handle_recall(&db, None, false, false, false)?;
+            // Default behavior when typing just `cpl`: Open interactive TUI menu
+            handle_recall(&db, None, false, false, true)?;
         }
     }
 

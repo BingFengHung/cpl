@@ -65,10 +65,7 @@ pub fn render_results(solutions: &[Solution], db: &Database, interactive: bool) 
             copy_to_clipboard(&cmd);
             println!("📋 已將指令複製到剪貼簿 (Copied to clipboard):\n   $ {}", cmd);
         }
-        _ => {
-            // Print text summary on exit so terminal is never left blank
-            render_text_list(solutions);
-        }
+        _ => {}
     }
 
     Ok(())
@@ -230,7 +227,7 @@ pub fn render_text_list(solutions: &[Solution]) {
         }
     }
     println!("\n----------------------------------------------------------------");
-    println!("💡 提示: 執行 `cpl recall -i` 可開啟全螢幕雙欄 TUI 圖形選單。");
+    println!("💡 提示: 執行 `cpl recall -t` 可顯示純文字清單。");
     println!("================================================================");
 }
 

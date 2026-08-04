@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "cpl",
     author = "Copilot CLI Plus Developer",
-    version = "0.2.1",
+    version = "0.2.2",
     about = "Copilot CLI Plus (cpl): AI Solution Recall, Indexing & Self-Updating CLI Assistant"
 )]
 pub struct Cli {
@@ -14,7 +14,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Recall and search past AI solutions & commands
+    /// Recall and search past AI solutions & commands interactively
     Recall {
         /// Search keyword or query
         query: Option<String>,
@@ -27,9 +27,9 @@ pub enum Commands {
         #[arg(short, long)]
         pinned: bool,
 
-        /// Open interactive TUI split-screen menu
+        /// Display plain text output instead of TUI menu
         #[arg(short, long)]
-        interactive: bool,
+        text: bool,
     },
 
     /// Pin/Star a solution for quick access
