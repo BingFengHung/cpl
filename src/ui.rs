@@ -1,0 +1,222 @@
+use crate::model::Solution;
+use crate::storage::Database;
+use anyhow::Result;
+use crossterm::{
+    event::{self, Event, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    Terminal,
+};
+use std::io;
+
+pub fn render_interactive(solutions: &[Solution], db: &Database) -> Result<()> {
+    if solutions.is_empty() {
+        println!("🔍 No past solutions found matching your query.");
+        println!("💡 Tip: Run `cpl scan` to pull existing Copilot CLI logs into cpl index.");
+        return Ok(());
+    }
+
+    // Try initializing terminal raw mode for TUI
+    if enable_raw_mode().is_err() {
+        // Fallback to text rendering if not in TUI TTY environment
+        render_text_list(solutions);
+        return Ok(());
+    }
+
+    let mut stdout = io::stdout();
+    if execute!(stdout, EnterAlternateScreen).is_err() {
+        let _ = disable_raw_mode();
+        render_text_list(solutions);
+        return Ok(());
+    }
+
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = match Terminal::new(backend) {
+        Ok(t) => t,
+        Err(_) => {
+            let _ = disable_raw_mode();
+            render_text_list(solutions);
+            return Ok(());
+        }
+    };
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(0));
+
+    let res = run_tui_loop(&mut terminal, solutions, &mut list_state, db);
+
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = terminal.show_cursor();
+
+    if let Ok(Some(action)) = res {
+        match action {
+            UserAction::CopyCommand(cmd) => {
+                copy_to_clipboard(&cmd);
+                println!("📋 Copied command to clipboard: {}", cmd);
+            }
+            UserAction::PrintCommand(cmd) => {
+                println!("{}", cmd);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+enum UserAction {
+    CopyCommand(String),
+    PrintCommand(String),
+}
+
+fn run_tui_loop<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    solutions: &[Solution],
+    list_state: &mut ListState,
+    _db: &Database,
+) -> io::Result<Option<UserAction>> {
+    loop {
+        terminal.draw(|f| {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(3), Constraint::Min(10), Constraint::Length(3)].as_ref())
+                .split(f.size());
+
+            // Header
+            let header = Paragraph::new(" 🔍 cpl recall - Interactive AI Solution Search (Press Enter to Copy, 'q' to Quit, 'p' to Pin)")
+                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .block(Block::default().borders(Borders::ALL).title(" Copilot Plus "));
+            f.render_widget(header, chunks[0]);
+
+            // Main dual-pane view
+            let main_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(45), Constraint::Percentage(55)].as_ref())
+                .split(chunks[1]);
+
+            // Left List items
+            let items: Vec<ListItem> = solutions
+                .iter()
+                .map(|s| {
+                    let pin_icon = if s.is_pinned { "⭐ " } else { "  " };
+                    let title = format!("{}{}", pin_icon, s.prompt_summary);
+                    ListItem::new(title).style(Style::default().fg(Color::White))
+                })
+                .collect();
+
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title(" Solutions "))
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::Blue)
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol("> ");
+
+            f.render_stateful_widget(list, main_chunks[0], list_state);
+
+            // Right Preview Pane
+            let selected_idx = list_state.selected().unwrap_or(0);
+            let preview_text = if let Some(sol) = solutions.get(selected_idx) {
+                let mut text = format!(
+                    "📅 Date: {}\n📂 Path: {}\n\n💡 Executed Commands:\n",
+                    sol.formatted_date(),
+                    sol.project_path
+                );
+                for cmd in &sol.commands {
+                    text.push_str(&format!("  $ {}\n", cmd));
+                }
+                if !sol.code_snippets.is_empty() {
+                    text.push_str("\n📝 Code Snippets:\n");
+                    for snip in &sol.code_snippets {
+                        text.push_str(&format!("--- [{}] ---\n{}\n", snip.language, snip.code));
+                    }
+                }
+                text
+            } else {
+                "No item selected".to_string()
+            };
+
+            let preview = Paragraph::new(preview_text)
+                .block(Block::default().borders(Borders::ALL).title(" Solution Preview "))
+                .style(Style::default().fg(Color::Green));
+            f.render_widget(preview, main_chunks[1]);
+
+            // Footer / Keybindings help
+            let footer = Paragraph::new(" [↑/↓] Navigate  |  [Enter] Copy Command  |  [q/Esc] Quit ")
+                .style(Style::default().fg(Color::DarkGray));
+            f.render_widget(footer, chunks[2]);
+        })?;
+
+        if event::poll(std::time::Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let i = match list_state.selected() {
+                            Some(i) => {
+                                if i >= solutions.len() - 1 {
+                                    0
+                                } else {
+                                    i + 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        list_state.select(Some(i));
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        let i = match list_state.selected() {
+                            Some(i) => {
+                                if i == 0 {
+                                    solutions.len() - 1
+                                } else {
+                                    i - 1
+                                }
+                            }
+                            None => 0,
+                        };
+                        list_state.select(Some(i));
+                    }
+                    KeyCode::Enter => {
+                        if let Some(idx) = list_state.selected() {
+                            if let Some(sol) = solutions.get(idx) {
+                                if let Some(cmd) = sol.commands.first() {
+                                    return Ok(Some(UserAction::CopyCommand(cmd.clone())));
+                                }
+                            }
+                        }
+                        return Ok(None);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+pub fn render_text_list(solutions: &[Solution]) {
+    println!("\n🔍 Found {} past solution(s):\n", solutions.len());
+    for (idx, sol) in solutions.iter().enumerate() {
+        let pin = if sol.is_pinned { "⭐ " } else { "" };
+        println!("{}. {}{}", idx + 1, pin, sol.prompt_summary);
+        println!("   📅 {} | 📂 {}", sol.formatted_date(), sol.project_path);
+        for cmd in &sol.commands {
+            println!("   💻 $ {}", cmd);
+        }
+        println!();
+    }
+}
+
+fn copy_to_clipboard(text: &str) {
+    if let Ok(mut board) = arboard::Clipboard::new() {
+        let _ = board.set_text(text);
+    }
+}
