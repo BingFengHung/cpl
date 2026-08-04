@@ -18,8 +18,8 @@ fn main() -> Result<()> {
     let _ = ingestor::scan_and_ingest(&db);
 
     match &cli.command {
-        Some(Commands::Recall { query, local, pinned }) => {
-            handle_recall(&db, query.as_deref(), *local, *pinned)?;
+        Some(Commands::Recall { query, local, pinned, text }) => {
+            handle_recall(&db, query.as_deref(), *local, *pinned, *text)?;
         }
         Some(Commands::Pin { id, note: _ }) => {
             handle_pin(&db, *id)?;
@@ -41,14 +41,14 @@ fn main() -> Result<()> {
         }
         None => {
             // Default behavior when typing just `cpl`
-            handle_recall(&db, None, false, false)?;
+            handle_recall(&db, None, false, false, false)?;
         }
     }
 
     Ok(())
 }
 
-fn handle_recall(db: &Database, query: Option<&str>, local_only: bool, pinned: bool) -> Result<()> {
+fn handle_recall(db: &Database, query: Option<&str>, local_only: bool, pinned: bool, text_only: bool) -> Result<()> {
     let project_filter = if local_only {
         std::env::current_dir()
             .ok()
@@ -58,7 +58,7 @@ fn handle_recall(db: &Database, query: Option<&str>, local_only: bool, pinned: b
     };
 
     let solutions = db.search(query, project_filter.as_deref(), pinned)?;
-    ui::render_interactive(&solutions, db)?;
+    ui::render_interactive(&solutions, db, text_only)?;
     Ok(())
 }
 

@@ -14,13 +14,21 @@ use ratatui::{
     Terminal,
 };
 use std::io;
+use std::time::{Duration, Instant};
 
-pub fn render_interactive(solutions: &[Solution], db: &Database) -> Result<()> {
+pub fn render_interactive(solutions: &[Solution], db: &Database, text_only: bool) -> Result<()> {
     if solutions.is_empty() {
         println!("🔍 尚無符合的 AI 對話歷史紀錄 (No past solutions found matching your query).");
-        println!("💡 提示: 可執行 `cpl scan` 掃描本機 Copilot/AGY CLI 日誌，或執行 `cpl recall` 檢視全域紀錄。");
+        println!("💡 提示: 可執行 `cpl scan --reindex` 重新掃描本機 Copilot/AGY CLI 日誌。");
         return Ok(());
     }
+
+    if text_only {
+        render_text_list(solutions);
+        return Ok(());
+    }
+
+    let start_time = Instant::now();
 
     // Try initializing terminal raw mode for TUI
     if enable_raw_mode().is_err() {
@@ -53,6 +61,14 @@ pub fn render_interactive(solutions: &[Solution], db: &Database) -> Result<()> {
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
     let _ = terminal.show_cursor();
+
+    let elapsed = start_time.elapsed();
+
+    // Fallback to text list if TUI exited too fast (<100ms) without selection
+    if elapsed < Duration::from_millis(100) && res.as_ref().ok().and_then(|a| a.as_ref()).is_none() {
+        render_text_list(solutions);
+        return Ok(());
+    }
 
     if let Ok(Some(action)) = res {
         match action {
@@ -88,9 +104,12 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                 .split(f.size());
 
             // Header
-            let header = Paragraph::new(" 🔍 cpl recall - AI 解法與指令記憶庫 (Press Enter to Copy, 'q' to Quit)")
-                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-                .block(Block::default().borders(Borders::ALL).title(" Copilot Plus "));
+            let header = Paragraph::new(format!(
+                " 🔍 cpl recall - AI 解法與指令記憶庫 (共 {} 筆解法, Enter: 複製, q: 離開)",
+                solutions.len()
+            ))
+            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .block(Block::default().borders(Borders::ALL).title(" Copilot Plus "));
             f.render_widget(header, chunks[0]);
 
             // Main dual-pane view
@@ -129,8 +148,12 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                     sol.formatted_date(),
                     sol.project_path
                 );
-                for cmd in &sol.commands {
-                    text.push_str(&format!("  $ {}\n", cmd));
+                if sol.commands.is_empty() {
+                    text.push_str("  (無直接執行的命令)\n");
+                } else {
+                    for cmd in &sol.commands {
+                        text.push_str(&format!("  $ {}\n", cmd));
+                    }
                 }
                 if !sol.code_snippets.is_empty() {
                     text.push_str("\n📝 程式碼片段:\n");
@@ -154,7 +177,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
             f.render_widget(footer, chunks[2]);
         })?;
 
-        if event::poll(std::time::Duration::from_millis(100))? {
+        if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
@@ -202,7 +225,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
 }
 
 pub fn render_text_list(solutions: &[Solution]) {
-    println!("\n🔍 找到 {} 筆歷史解法紀錄:\n", solutions.len());
+    println!("\n🔍 共找到 {} 筆歷史對話解法紀錄:\n", solutions.len());
     for (idx, sol) in solutions.iter().enumerate() {
         let pin = if sol.is_pinned { "⭐ " } else { "" };
         println!("{}. {}{}", idx + 1, pin, sol.prompt_summary);
