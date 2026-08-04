@@ -17,14 +17,13 @@ use std::io;
 
 pub fn render_interactive(solutions: &[Solution], db: &Database) -> Result<()> {
     if solutions.is_empty() {
-        println!("🔍 No past solutions found matching your query.");
-        println!("💡 Tip: Run `cpl scan` to pull existing Copilot CLI logs into cpl index.");
+        println!("🔍 尚無符合的 AI 對話歷史紀錄 (No past solutions found matching your query).");
+        println!("💡 提示: 可執行 `cpl scan` 掃描本機 Copilot/AGY CLI 日誌，或執行 `cpl recall` 檢視全域紀錄。");
         return Ok(());
     }
 
     // Try initializing terminal raw mode for TUI
     if enable_raw_mode().is_err() {
-        // Fallback to text rendering if not in TUI TTY environment
         render_text_list(solutions);
         return Ok(());
     }
@@ -59,10 +58,10 @@ pub fn render_interactive(solutions: &[Solution], db: &Database) -> Result<()> {
         match action {
             UserAction::CopyCommand(cmd) => {
                 copy_to_clipboard(&cmd);
-                println!("📋 Copied command to clipboard: {}", cmd);
+                println!("📋 已將指令複製到剪貼簿 (Copied to clipboard):\n   $ {}", cmd);
             }
             UserAction::PrintCommand(cmd) => {
-                println!("{}", cmd);
+                println!("💻 $ {}", cmd);
             }
         }
     }
@@ -89,7 +88,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                 .split(f.size());
 
             // Header
-            let header = Paragraph::new(" 🔍 cpl recall - Interactive AI Solution Search (Press Enter to Copy, 'q' to Quit, 'p' to Pin)")
+            let header = Paragraph::new(" 🔍 cpl recall - AI 解法與指令記憶庫 (Press Enter to Copy, 'q' to Quit)")
                 .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
                 .block(Block::default().borders(Borders::ALL).title(" Copilot Plus "));
             f.render_widget(header, chunks[0]);
@@ -111,7 +110,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                 .collect();
 
             let list = List::new(items)
-                .block(Block::default().borders(Borders::ALL).title(" Solutions "))
+                .block(Block::default().borders(Borders::ALL).title(" 歷史解法清單 (Solutions) "))
                 .highlight_style(
                     Style::default()
                         .bg(Color::Blue)
@@ -126,7 +125,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
             let selected_idx = list_state.selected().unwrap_or(0);
             let preview_text = if let Some(sol) = solutions.get(selected_idx) {
                 let mut text = format!(
-                    "📅 Date: {}\n📂 Path: {}\n\n💡 Executed Commands:\n",
+                    "📅 時間: {}\n📂 路徑: {}\n\n💡 執行的關鍵指令:\n",
                     sol.formatted_date(),
                     sol.project_path
                 );
@@ -134,23 +133,23 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                     text.push_str(&format!("  $ {}\n", cmd));
                 }
                 if !sol.code_snippets.is_empty() {
-                    text.push_str("\n📝 Code Snippets:\n");
+                    text.push_str("\n📝 程式碼片段:\n");
                     for snip in &sol.code_snippets {
                         text.push_str(&format!("--- [{}] ---\n{}\n", snip.language, snip.code));
                     }
                 }
                 text
             } else {
-                "No item selected".to_string()
+                "尚無選取的項目".to_string()
             };
 
             let preview = Paragraph::new(preview_text)
-                .block(Block::default().borders(Borders::ALL).title(" Solution Preview "))
+                .block(Block::default().borders(Borders::ALL).title(" 解法預覽 (Preview) "))
                 .style(Style::default().fg(Color::Green));
             f.render_widget(preview, main_chunks[1]);
 
             // Footer / Keybindings help
-            let footer = Paragraph::new(" [↑/↓] Navigate  |  [Enter] Copy Command  |  [q/Esc] Quit ")
+            let footer = Paragraph::new(" [↑/↓] 移動選單  |  [Enter] 複製指令至剪貼簿  |  [q/Esc] 退出 ")
                 .style(Style::default().fg(Color::DarkGray));
             f.render_widget(footer, chunks[2]);
         })?;
@@ -203,7 +202,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
 }
 
 pub fn render_text_list(solutions: &[Solution]) {
-    println!("\n🔍 Found {} past solution(s):\n", solutions.len());
+    println!("\n🔍 找到 {} 筆歷史解法紀錄:\n", solutions.len());
     for (idx, sol) in solutions.iter().enumerate() {
         let pin = if sol.is_pinned { "⭐ " } else { "" };
         println!("{}. {}{}", idx + 1, pin, sol.prompt_summary);

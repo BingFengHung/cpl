@@ -14,20 +14,20 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let db = Database::open()?;
 
-    // Auto scan local Copilot logs on startup to ensure Zero Cold Start
+    // Auto scan local Copilot & AGY logs on startup to ensure Zero Cold Start
     let _ = ingestor::scan_and_ingest(&db);
 
     match &cli.command {
-        Some(Commands::Recall { query, global, pinned }) => {
-            handle_recall(&db, query.as_deref(), *global, *pinned)?;
+        Some(Commands::Recall { query, local, pinned }) => {
+            handle_recall(&db, query.as_deref(), *local, *pinned)?;
         }
         Some(Commands::Pin { id, note: _ }) => {
             handle_pin(&db, *id)?;
         }
         Some(Commands::Scan { reindex: _ }) => {
-            println!("🔍 Scanning Copilot CLI transcript logs...");
+            println!("🔍 正在掃描本機 Copilot CLI 與 AGY CLI 對話日誌...");
             let count = ingestor::scan_and_ingest(&db)?;
-            println!("✅ Successfully indexed {} new solution(s) into database!", count);
+            println!("✅ 成功索引並更新 {} 筆全新歷史解法！", count);
         }
         Some(Commands::Update { force }) => {
             updater::check_and_update(*force)?;
@@ -36,29 +36,24 @@ fn main() -> Result<()> {
             println!("cpl version {}", env!("CARGO_PKG_VERSION"));
         }
         None => {
-            // Default behavior if query provided as direct positional arg: cpl <query>
-            if let Some(ref q) = cli.query {
-                handle_recall(&db, Some(q.as_str()), cli.global, cli.pinned)?;
-            } else {
-                // Interactive recall mode
-                handle_recall(&db, None, cli.global, cli.pinned)?;
-            }
+            // Default behavior when typing just `cpl`
+            handle_recall(&db, None, false, false)?;
         }
     }
 
     Ok(())
 }
 
-fn handle_recall(db: &Database, query: Option<&str>, global: bool, pinned: bool) -> Result<()> {
-    let current_dir = if global {
-        None
-    } else {
+fn handle_recall(db: &Database, query: Option<&str>, local_only: bool, pinned: bool) -> Result<()> {
+    let project_filter = if local_only {
         std::env::current_dir()
             .ok()
             .map(|p| p.to_string_lossy().to_string())
+    } else {
+        None
     };
 
-    let solutions = db.search(query, current_dir.as_deref(), pinned)?;
+    let solutions = db.search(query, project_filter.as_deref(), pinned)?;
     ui::render_interactive(&solutions, db)?;
     Ok(())
 }
@@ -69,7 +64,7 @@ fn handle_pin(db: &Database, target_id: Option<i64>) -> Result<()> {
         None => match db.get_latest_id()? {
             Some(latest) => latest,
             None => {
-                println!("❌ No solutions found in database to pin.");
+                println!("❌ 資料庫中尚無可供收藏的解法紀錄。");
                 return Ok(());
             }
         },
@@ -77,9 +72,9 @@ fn handle_pin(db: &Database, target_id: Option<i64>) -> Result<()> {
 
     let is_pinned = db.toggle_pin(id_to_pin)?;
     if is_pinned {
-        println!("⭐ Pinned solution #{} successfully!", id_to_pin);
+        println!("⭐ 成功星號收藏解法紀錄 #{}！", id_to_pin);
     } else {
-        println!("📌 Unpinned solution #{}!", id_to_pin);
+        println!("📌 已取消收藏解法紀錄 #{}！", id_to_pin);
     }
 
     Ok(())

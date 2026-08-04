@@ -50,18 +50,22 @@ fn get_log_directories() -> Vec<PathBuf> {
 
 fn scan_directory(dir: &Path, db: &Database) -> Result<usize> {
     let mut count = 0;
-    let entries = fs::read_dir(dir)?;
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Ok(sub_count) = scan_directory(&path, db) {
-                count += sub_count;
-            }
-        } else if is_transcript_file(&path) {
-            if let Ok(solution) = parse_transcript_file(&path) {
-                if db.insert_solution(&solution).is_ok() {
-                    count += 1;
+    // Use read_dir, continuing on permission errors
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Ok(sub_count) = scan_directory(&path, db) {
+                    count += sub_count;
+                }
+            } else if is_transcript_file(&path) {
+                if let Ok(solution) = parse_transcript_file(&path) {
+                    if !solution.prompt_summary.trim().is_empty() && (!solution.commands.is_empty() || !solution.code_snippets.is_empty()) {
+                        if db.insert_solution(&solution).is_ok() {
+                            count += 1;
+                        }
+                    }
                 }
             }
         }
@@ -71,9 +75,13 @@ fn scan_directory(dir: &Path, db: &Database) -> Result<usize> {
 }
 
 fn is_transcript_file(path: &Path) -> bool {
-    if let Some(ext) = path.extension() {
-        let ext_str = ext.to_string_lossy();
-        ext_str == "json" || ext_str == "jsonl" || ext_str == "log"
+    let filename = path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default();
+    if filename.starts_with("transcript")
+        || filename.ends_with(".jsonl")
+        || filename.ends_with(".json")
+        || filename.ends_with(".log")
+    {
+        true
     } else {
         false
     }
@@ -97,21 +105,20 @@ fn parse_transcript_file(path: &Path) -> Result<Solution> {
             // Extract user input / prompt (agy CLI: USER_INPUT)
             if msg_type == "USER_INPUT" || prompt_summary.is_empty() {
                 if let Some(prompt) = val.get("content").and_then(|c| c.as_str()) {
-                    if prompt_summary.is_empty() && prompt.len() > 2 {
-                        let clean_prompt = prompt.lines().next().unwrap_or(prompt);
-                        if !clean_prompt.starts_with('<') {
-                            prompt_summary = clean_prompt.to_string();
-                        }
+                    let clean = prompt.trim();
+                    if prompt_summary.is_empty() && clean.len() > 2 && !clean.starts_with('<') {
+                        prompt_summary = clean.lines().next().unwrap_or(clean).to_string();
                     }
                 }
             }
 
-            // Extract tool calls / commands (agy CLI: run_command)
+            // Extract tool calls / commands (agy CLI & Copilot CLI)
             if let Some(tool_calls) = val.get("tool_calls").and_then(|t| t.as_array()) {
                 for tool in tool_calls {
                     if let Some(cmd) = tool.get("CommandLine").and_then(|c| c.as_str()) {
-                        if !commands.contains(&cmd.to_string()) {
-                            commands.push(cmd.to_string());
+                        let trimmed = cmd.trim().to_string();
+                        if !trimmed.is_empty() && !commands.contains(&trimmed) {
+                            commands.push(trimmed);
                         }
                     }
                 }
@@ -126,7 +133,7 @@ fn parse_transcript_file(path: &Path) -> Result<Solution> {
         prompt_summary = path
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Copilot Session".to_string());
+            .unwrap_or_else(|| "Copilot/AGY Session".to_string());
     }
 
     let timestamp = fs::metadata(path)
@@ -136,7 +143,7 @@ fn parse_transcript_file(path: &Path) -> Result<Solution> {
 
     let project_path = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "Unknown".to_string());
+        .unwrap_or_else(|_| "Global".to_string());
 
     Ok(Solution {
         id: 0,
@@ -162,7 +169,9 @@ fn extract_code_blocks(content: &str, snippets: &mut Vec<CodeSnippet>, commands:
                 let trimmed = current_block.trim();
                 if !trimmed.is_empty() {
                     if lang == "bash" || lang == "sh" || lang == "powershell" || lang == "cmd" {
-                        commands.push(trimmed.to_string());
+                        if !commands.contains(&trimmed.to_string()) {
+                            commands.push(trimmed.to_string());
+                        }
                     } else {
                         snippets.push(CodeSnippet {
                             language: if lang.is_empty() { "text".to_string() } else { lang.clone() },

@@ -4,24 +4,12 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "cpl",
     author = "Copilot CLI Plus Developer",
-    version = "0.1.1",
+    version = "0.1.2",
     about = "Copilot CLI Plus (cpl): AI Solution Recall, Indexing & Self-Updating CLI Assistant"
 )]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
-
-    /// Quick search shortcut: cpl <query>
-    #[arg(index = 1)]
-    pub query: Option<String>,
-
-    /// Search across all projects globally instead of current project only
-    #[arg(short, long)]
-    pub global: bool,
-
-    /// Show pinned solutions only
-    #[arg(short, long)]
-    pub pinned: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -31,9 +19,9 @@ pub enum Commands {
         /// Search keyword or query
         query: Option<String>,
 
-        /// Search across all projects globally
+        /// Search current project only (defaults to global search across all projects)
         #[arg(short, long)]
-        global: bool,
+        local: bool,
 
         /// Show pinned solutions only
         #[arg(short, long)]
@@ -50,7 +38,7 @@ pub enum Commands {
         note: Option<String>,
     },
 
-    /// Scan local Copilot CLI transcripts and update search index
+    /// Scan local Copilot CLI & AGY CLI transcripts and update search index
     Scan {
         /// Force re-indexing all transcript logs from scratch
         #[arg(short, long)]
