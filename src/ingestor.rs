@@ -34,12 +34,14 @@ fn get_log_directories() -> Vec<PathBuf> {
         // Windows AppData locations
         if cfg!(target_os = "windows") {
             if let Ok(appdata) = std::env::var("APPDATA") {
-                dirs_list.push(PathBuf::from(appdata).join("github-copilot"));
-                dirs_list.push(PathBuf::from(appdata).join("antigravity-cli"));
+                let appdata_path = PathBuf::from(&appdata);
+                dirs_list.push(appdata_path.join("github-copilot"));
+                dirs_list.push(appdata_path.join("antigravity-cli"));
             }
             if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
-                dirs_list.push(PathBuf::from(localappdata).join("github-copilot"));
-                dirs_list.push(PathBuf::from(localappdata).join("antigravity-cli"));
+                let localappdata_path = PathBuf::from(&localappdata);
+                dirs_list.push(localappdata_path.join("github-copilot"));
+                dirs_list.push(localappdata_path.join("antigravity-cli"));
             }
         }
     }

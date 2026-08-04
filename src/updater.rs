@@ -66,7 +66,7 @@ pub fn check_and_update(force: bool) -> Result<()> {
 
     println!("📥 Downloading asset: {}...", asset.name);
 
-    let mut resp = ureq::get(&asset.browser_download_url)
+    let resp = ureq::get(&asset.browser_download_url)
         .set("User-Agent", "cpl-updater")
         .call()
         .map_err(|e| anyhow!("Failed to download release asset: {}", e))?;
