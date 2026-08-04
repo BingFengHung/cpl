@@ -142,6 +142,9 @@ impl Database {
         );
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
+        // Only return items with executable commands or code snippets
+        sql.push_str(" AND (commands != '[]' OR code_snippets != '[]')");
+
         if pinned_only {
             sql.push_str(" AND is_pinned = 1");
         }
@@ -203,6 +206,9 @@ impl Database {
     pub fn get_total_count(&self, query: Option<&str>, project_path: Option<&str>, pinned_only: bool) -> Result<usize> {
         let mut sql = String::from("SELECT COUNT(*) FROM solutions WHERE 1=1");
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        // Only count items with executable commands or code snippets
+        sql.push_str(" AND (commands != '[]' OR code_snippets != '[]')");
 
         if pinned_only {
             sql.push_str(" AND is_pinned = 1");

@@ -23,7 +23,7 @@ pub fn scan_and_ingest(db: &Database, custom_path: Option<&str>, verbose: bool) 
             } else if is_transcript_file(&dir) {
                 if let Ok(solutions) = parse_transcript_file(&dir) {
                     for sol in solutions {
-                        if !sol.prompt_summary.trim().is_empty() {
+                        if !sol.prompt_summary.trim().is_empty() && (!sol.commands.is_empty() || !sol.code_snippets.is_empty()) {
                             all_solutions.push(sol);
                         }
                     }
@@ -99,7 +99,7 @@ fn scan_directory_collect(dir: &Path, acc: &mut Vec<Solution>, verbose: bool) {
                 }
                 if let Ok(solutions) = parse_transcript_file(&path) {
                     for sol in solutions {
-                        if !sol.prompt_summary.trim().is_empty() {
+                        if !sol.prompt_summary.trim().is_empty() && (!sol.commands.is_empty() || !sol.code_snippets.is_empty()) {
                             acc.push(sol);
                         }
                     }

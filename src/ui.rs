@@ -27,7 +27,7 @@ pub fn render_results(
     let total_matched = db.get_total_count(initial_query, project_filter, pinned_only)?;
 
     if total_matched == 0 {
-        println!("🔍 尚無符合的 AI 對話歷史紀錄 (No past solutions found matching your query).");
+        println!("🔍 尚無符合的 AI 對話解法紀錄 (No past solutions found containing commands/snippets).");
         println!("💡 提示: 可執行 `cpl scan --reindex` 重新掃描本機 Copilot/AGY CLI 日誌。");
         return Ok(());
     }
@@ -136,7 +136,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
 
             // Header with total count indicator
             let header = Paragraph::new(format!(
-                " 🔍 搜尋 (Search): {}_  (符合 {} 筆紀錄, Enter: 複製, Esc: 離開)",
+                " 🔍 搜尋 (Search): {}_  (符合 {} 筆精準解法, Enter: 複製, Esc: 離開)",
                 search_query,
                 total_matched
             ))
@@ -150,12 +150,13 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                 .constraints([Constraint::Percentage(45), Constraint::Percentage(55)].as_ref())
                 .split(chunks[1]);
 
-            // Left List items
+            // Left List items with index numbers [1], [2], [3]...
             let items: Vec<ListItem> = solutions
                 .iter()
-                .map(|s| {
-                    let pin_icon = if s.is_pinned { "⭐ " } else { "  " };
-                    let title = format!("{}{}", pin_icon, s.prompt_summary);
+                .enumerate()
+                .map(|(idx, s)| {
+                    let pin_icon = if s.is_pinned { "⭐ " } else { "" };
+                    let title = format!("[{}] {}{}", idx + 1, pin_icon, s.prompt_summary);
                     ListItem::new(title).style(Style::default().fg(Color::White))
                 })
                 .collect();
