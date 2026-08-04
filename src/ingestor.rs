@@ -51,7 +51,6 @@ fn get_log_directories() -> Vec<PathBuf> {
 fn scan_directory(dir: &Path, db: &Database) -> Result<usize> {
     let mut count = 0;
 
-    // Use read_dir, continuing on permission errors
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -61,7 +60,9 @@ fn scan_directory(dir: &Path, db: &Database) -> Result<usize> {
                 }
             } else if is_transcript_file(&path) {
                 if let Ok(solution) = parse_transcript_file(&path) {
-                    if !solution.prompt_summary.trim().is_empty() && (!solution.commands.is_empty() || !solution.code_snippets.is_empty()) {
+                    if !solution.prompt_summary.trim().is_empty()
+                        && (!solution.commands.is_empty() || !solution.code_snippets.is_empty())
+                    {
                         if db.insert_solution(&solution).is_ok() {
                             count += 1;
                         }
@@ -76,15 +77,10 @@ fn scan_directory(dir: &Path, db: &Database) -> Result<usize> {
 
 fn is_transcript_file(path: &Path) -> bool {
     let filename = path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default();
-    if filename.starts_with("transcript")
+    filename.starts_with("transcript")
         || filename.ends_with(".jsonl")
         || filename.ends_with(".json")
         || filename.ends_with(".log")
-    {
-        true
-    } else {
-        false
-    }
 }
 
 fn parse_transcript_file(path: &Path) -> Result<Solution> {
@@ -93,7 +89,6 @@ fn parse_transcript_file(path: &Path) -> Result<Solution> {
     let mut commands = Vec::new();
     let mut code_snippets = Vec::new();
 
-    // Parse JSON Lines format (supports both Copilot CLI and agy CLI transcripts)
     for line in content.lines() {
         if line.trim().is_empty() {
             continue;
@@ -102,23 +97,38 @@ fn parse_transcript_file(path: &Path) -> Result<Solution> {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
             let msg_type = val.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
-            // Extract user input / prompt (agy CLI: USER_INPUT)
-            if msg_type == "USER_INPUT" || prompt_summary.is_empty() {
-                if let Some(prompt) = val.get("content").and_then(|c| c.as_str()) {
-                    let clean = prompt.trim();
-                    if prompt_summary.is_empty() && clean.len() > 2 && !clean.starts_with('<') {
-                        prompt_summary = clean.lines().next().unwrap_or(clean).to_string();
+            // 1. Extract User Prompt (supports <USER_REQUEST> tags and raw prompt)
+            if (msg_type == "USER_INPUT" || prompt_summary.is_empty()) && val.get("content").is_some() {
+                if let Some(raw_prompt) = val.get("content").and_then(|c| c.as_str()) {
+                    let cleaned = extract_clean_prompt(raw_prompt);
+                    if !cleaned.is_empty() && prompt_summary.is_empty() {
+                        prompt_summary = cleaned;
                     }
                 }
             }
 
-            // Extract tool calls / commands (agy CLI & Copilot CLI)
+            // 2. Extract Tool Calls / Commands (supports direct CommandLine and nested args.CommandLine)
             if let Some(tool_calls) = val.get("tool_calls").and_then(|t| t.as_array()) {
                 for tool in tool_calls {
-                    if let Some(cmd) = tool.get("CommandLine").and_then(|c| c.as_str()) {
-                        let trimmed = cmd.trim().to_string();
-                        if !trimmed.is_empty() && !commands.contains(&trimmed) {
-                            commands.push(trimmed);
+                    // Try direct CommandLine or args.CommandLine
+                    let raw_cmd = tool
+                        .get("CommandLine")
+                        .and_then(|c| c.as_str())
+                        .or_else(|| {
+                            tool.get("args")
+                                .and_then(|a| a.get("CommandLine"))
+                                .and_then(|c| c.as_str())
+                        })
+                        .or_else(|| {
+                            tool.get("args")
+                                .and_then(|a| a.get("command"))
+                                .and_then(|c| c.as_str())
+                        });
+
+                    if let Some(cmd) = raw_cmd {
+                        let clean_cmd = clean_command_str(cmd);
+                        if !clean_cmd.is_empty() && !commands.contains(&clean_cmd) {
+                            commands.push(clean_cmd);
                         }
                     }
                 }
@@ -126,14 +136,14 @@ fn parse_transcript_file(path: &Path) -> Result<Solution> {
         }
     }
 
-    // Fallback markdown code block extraction
+    // Fallback code block extraction from content
     extract_code_blocks(&content, &mut code_snippets, &mut commands);
 
     if prompt_summary.is_empty() {
         prompt_summary = path
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Copilot/AGY Session".to_string());
+            .unwrap_or_else(|| "Copilot Session".to_string());
     }
 
     let timestamp = fs::metadata(path)
@@ -157,6 +167,36 @@ fn parse_transcript_file(path: &Path) -> Result<Solution> {
     })
 }
 
+fn extract_clean_prompt(raw: &str) -> String {
+    let mut text = raw;
+    if let Some(start) = text.find("<USER_REQUEST>") {
+        text = &text[start + "<USER_REQUEST>".len()..];
+    }
+    if let Some(end) = text.find("</USER_REQUEST>") {
+        text = &text[..end];
+    }
+
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // Return the first meaningful non-empty line
+    for line in trimmed.lines() {
+        let l = line.trim();
+        if !l.is_empty() && !l.starts_with('<') {
+            return l.to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn clean_command_str(cmd: &str) -> String {
+    let trimmed = cmd.trim();
+    let unescaped = trimmed.trim_matches('"').trim_matches('\'');
+    unescaped.replace("\\\"", "\"").replace("\\\\", "\\")
+}
+
 fn extract_code_blocks(content: &str, snippets: &mut Vec<CodeSnippet>, commands: &mut Vec<String>) {
     let mut in_block = false;
     let mut lang = String::new();
@@ -169,8 +209,9 @@ fn extract_code_blocks(content: &str, snippets: &mut Vec<CodeSnippet>, commands:
                 let trimmed = current_block.trim();
                 if !trimmed.is_empty() {
                     if lang == "bash" || lang == "sh" || lang == "powershell" || lang == "cmd" {
-                        if !commands.contains(&trimmed.to_string()) {
-                            commands.push(trimmed.to_string());
+                        let clean = clean_command_str(trimmed);
+                        if !commands.contains(&clean) {
+                            commands.push(clean);
                         }
                     } else {
                         snippets.push(CodeSnippet {
