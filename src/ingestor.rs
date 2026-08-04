@@ -22,9 +22,13 @@ pub fn scan_and_ingest(db: &Database) -> Result<usize> {
 fn get_log_directories() -> Vec<PathBuf> {
     let mut dirs_list = Vec::new();
     if let Some(home) = dirs::home_dir() {
-        // GitHub Copilot CLI standard locations
+        // GitHub Copilot CLI & gh extension standard locations
         dirs_list.push(home.join(".config").join("github-copilot"));
         dirs_list.push(home.join(".local").join("share").join("github-copilot"));
+        dirs_list.push(home.join(".copilot-cli"));
+        dirs_list.push(home.join(".github-copilot"));
+        dirs_list.push(home.join(".config").join("gh"));
+        dirs_list.push(home.join(".config").join("gh").join("copilot"));
 
         // agy CLI (Google Antigravity CLI) locations
         dirs_list.push(home.join(".gemini").join("antigravity-cli").join("brain"));
@@ -37,11 +41,15 @@ fn get_log_directories() -> Vec<PathBuf> {
                 let appdata_path = PathBuf::from(&appdata);
                 dirs_list.push(appdata_path.join("github-copilot"));
                 dirs_list.push(appdata_path.join("antigravity-cli"));
+                dirs_list.push(appdata_path.join("GitHub CLI"));
+                dirs_list.push(appdata_path.join("gh"));
             }
             if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
                 let localappdata_path = PathBuf::from(&localappdata);
                 dirs_list.push(localappdata_path.join("github-copilot"));
                 dirs_list.push(localappdata_path.join("antigravity-cli"));
+                dirs_list.push(localappdata_path.join("GitHub CLI"));
+                dirs_list.push(localappdata_path.join("gh"));
             }
         }
     }
@@ -76,11 +84,16 @@ fn scan_directory(dir: &Path, db: &Database) -> Result<usize> {
 }
 
 fn is_transcript_file(path: &Path) -> bool {
-    let filename = path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default();
-    filename.starts_with("transcript")
+    let filename = path.file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+    filename.contains("transcript")
+        || filename.contains("history")
+        || filename.contains("session")
+        || filename.contains("copilot")
         || filename.ends_with(".jsonl")
         || filename.ends_with(".json")
         || filename.ends_with(".log")
+        || filename.ends_with(".hist")
+        || path.extension().is_none()
 }
 
 fn parse_transcript_file(path: &Path) -> Result<Vec<Solution>> {
@@ -108,29 +121,45 @@ fn parse_transcript_file(path: &Path) -> Result<Vec<Solution>> {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
             let msg_type = val.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
-            // 1. Detect new USER_INPUT -> Save previous solution turn if exists
-            if msg_type == "USER_INPUT" {
-                if !current_prompt.is_empty() {
-                    solutions.push(Solution {
-                        id: 0,
-                        prompt_summary: current_prompt.clone(),
-                        commands: current_commands.clone(),
-                        code_snippets: current_snippets.clone(),
-                        project_path: project_path.clone(),
-                        git_repo: None,
-                        is_pinned: false,
-                        timestamp,
-                    });
-                    current_commands.clear();
-                    current_snippets.clear();
-                }
+            // 1. Extract Prompt (supports prompt, request, question, user, content, USER_INPUT)
+            let prompt_candidate = val.get("prompt")
+                .or_else(|| val.get("request"))
+                .or_else(|| val.get("question"))
+                .or_else(|| val.get("user"))
+                .or_else(|| val.get("content"))
+                .and_then(|v| v.as_str());
 
-                if let Some(raw_prompt) = val.get("content").and_then(|c| c.as_str()) {
-                    current_prompt = extract_clean_prompt(raw_prompt);
+            if msg_type == "USER_INPUT" || msg_type == "user" || current_prompt.is_empty() {
+                if let Some(raw_prompt) = prompt_candidate {
+                    let cleaned = extract_clean_prompt(raw_prompt);
+                    if !cleaned.is_empty() {
+                        if !current_prompt.is_empty() {
+                            solutions.push(Solution {
+                                id: 0,
+                                prompt_summary: current_prompt.clone(),
+                                commands: current_commands.clone(),
+                                code_snippets: current_snippets.clone(),
+                                project_path: project_path.clone(),
+                                git_repo: None,
+                                is_pinned: false,
+                                timestamp,
+                            });
+                            current_commands.clear();
+                            current_snippets.clear();
+                        }
+                        current_prompt = cleaned;
+                    }
                 }
             }
 
-            // 2. Extract Tool Calls / Commands
+            // 2. Extract Commands (supports suggestion, command, tool_calls, CommandLine)
+            if let Some(cmd_val) = val.get("command").or_else(|| val.get("suggestion")).and_then(|c| c.as_str()) {
+                let clean = clean_command_str(cmd_val);
+                if !clean.is_empty() && !current_commands.contains(&clean) {
+                    current_commands.push(clean);
+                }
+            }
+
             if let Some(tool_calls) = val.get("tool_calls").and_then(|t| t.as_array()) {
                 for tool in tool_calls {
                     let raw_cmd = tool
@@ -156,11 +185,27 @@ fn parse_transcript_file(path: &Path) -> Result<Vec<Solution>> {
                 }
             }
 
-            // 3. Extract text content response & code blocks inside JSON `content` field
-            if let Some(text_content) = val.get("content").and_then(|c| c.as_str()) {
-                if msg_type == "PLANNER_RESPONSE" || msg_type == "MODEL" {
+            // 3. Extract text content response & code blocks inside JSON `content`/`response`/`answer`
+            let response_candidate = val.get("response")
+                .or_else(|| val.get("answer"))
+                .or_else(|| val.get("content"))
+                .and_then(|c| c.as_str());
+
+            if let Some(text_content) = response_candidate {
+                if msg_type == "PLANNER_RESPONSE" || msg_type == "MODEL" || msg_type == "assistant" || msg_type.is_empty() {
                     extract_code_blocks_from_text(text_content, &mut current_snippets, &mut current_commands);
                 }
+            }
+        } else {
+            // Non-JSON plain text history line fallback (e.g. raw shell commands or plain text prompts)
+            let trimmed = line.trim();
+            if trimmed.starts_with('$') || trimmed.starts_with('>') {
+                let clean = clean_command_str(trimmed.trim_start_matches('$').trim_start_matches('>'));
+                if !clean.is_empty() && !current_commands.contains(&clean) {
+                    current_commands.push(clean);
+                }
+            } else if current_prompt.is_empty() && trimmed.len() > 3 {
+                current_prompt = trimmed.to_string();
             }
         }
     }
