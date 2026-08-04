@@ -20,8 +20,8 @@ fn main() -> Result<()> {
     }
 
     match &cli.command {
-        Some(Commands::Recall { query, local, pinned, text }) => {
-            handle_recall(&db, query.as_deref(), *local, *pinned, *text)?;
+        Some(Commands::Recall { query, local, pinned, interactive }) => {
+            handle_recall(&db, query.as_deref(), *local, *pinned, *interactive)?;
         }
         Some(Commands::Pin { id, note: _ }) => {
             handle_pin(&db, *id)?;
@@ -50,7 +50,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_recall(db: &Database, query: Option<&str>, local_only: bool, pinned: bool, text_only: bool) -> Result<()> {
+fn handle_recall(db: &Database, query: Option<&str>, local_only: bool, pinned: bool, interactive: bool) -> Result<()> {
     let project_filter = if local_only {
         std::env::current_dir()
             .ok()
@@ -60,7 +60,7 @@ fn handle_recall(db: &Database, query: Option<&str>, local_only: bool, pinned: b
     };
 
     let solutions = db.search(query, project_filter.as_deref(), pinned)?;
-    ui::render_interactive(&solutions, db, text_only)?;
+    ui::render_results(&solutions, db, interactive)?;
     Ok(())
 }
 

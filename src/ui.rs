@@ -14,23 +14,21 @@ use ratatui::{
     Terminal,
 };
 use std::io;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-pub fn render_interactive(solutions: &[Solution], db: &Database, text_only: bool) -> Result<()> {
+pub fn render_results(solutions: &[Solution], db: &Database, interactive: bool) -> Result<()> {
     if solutions.is_empty() {
         println!("🔍 尚無符合的 AI 對話歷史紀錄 (No past solutions found matching your query).");
         println!("💡 提示: 可執行 `cpl scan --reindex` 重新掃描本機 Copilot/AGY CLI 日誌。");
         return Ok(());
     }
 
-    if text_only {
+    if !interactive {
         render_text_list(solutions);
         return Ok(());
     }
 
-    let start_time = Instant::now();
-
-    // Try initializing terminal raw mode for TUI
+    // Interactive TUI rendering
     if enable_raw_mode().is_err() {
         render_text_list(solutions);
         return Ok(());
@@ -62,23 +60,14 @@ pub fn render_interactive(solutions: &[Solution], db: &Database, text_only: bool
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
     let _ = terminal.show_cursor();
 
-    let elapsed = start_time.elapsed();
-
-    // Fallback to text list if TUI exited too fast (<100ms) without selection
-    if elapsed < Duration::from_millis(100) && res.as_ref().ok().and_then(|a| a.as_ref()).is_none() {
-        render_text_list(solutions);
-        return Ok(());
-    }
-
-    if let Ok(Some(action)) = res {
-        match action {
-            UserAction::CopyCommand(cmd) => {
-                copy_to_clipboard(&cmd);
-                println!("📋 已將指令複製到剪貼簿 (Copied to clipboard):\n   $ {}", cmd);
-            }
-            UserAction::PrintCommand(cmd) => {
-                println!("💻 $ {}", cmd);
-            }
+    match res {
+        Ok(Some(UserAction::CopyCommand(cmd))) => {
+            copy_to_clipboard(&cmd);
+            println!("📋 已將指令複製到剪貼簿 (Copied to clipboard):\n   $ {}", cmd);
+        }
+        _ => {
+            // Print text summary on exit so terminal is never left blank
+            render_text_list(solutions);
         }
     }
 
@@ -87,7 +76,6 @@ pub fn render_interactive(solutions: &[Solution], db: &Database, text_only: bool
 
 enum UserAction {
     CopyCommand(String),
-    PrintCommand(String),
 }
 
 fn run_tui_loop<B: ratatui::backend::Backend>(
@@ -225,16 +213,25 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
 }
 
 pub fn render_text_list(solutions: &[Solution]) {
-    println!("\n🔍 共找到 {} 筆歷史對話解法紀錄:\n", solutions.len());
-    for (idx, sol) in solutions.iter().enumerate() {
+    println!("================================================================");
+    println!(" 🔍 cpl recall - 歷史 AI 對話與解法紀錄 (共 {} 筆解法)", solutions.len());
+    println!("================================================================");
+
+    for (idx, sol) in solutions.iter().enumerate().take(15) {
         let pin = if sol.is_pinned { "⭐ " } else { "" };
-        println!("{}. {}{}", idx + 1, pin, sol.prompt_summary);
-        println!("   📅 {} | 📂 {}", sol.formatted_date(), sol.project_path);
+        println!("\n[{}] {}{}", idx + 1, pin, sol.prompt_summary);
+        println!("    📅 {} | 📂 {}", sol.formatted_date(), sol.project_path);
         for cmd in &sol.commands {
-            println!("   💻 $ {}", cmd);
+            println!("    💻 $ {}", cmd);
         }
-        println!();
+        for snip in &sol.code_snippets {
+            let first_line = snip.code.lines().next().unwrap_or(&snip.code);
+            println!("    📝 [{}] {}", snip.language, first_line);
+        }
     }
+    println!("\n----------------------------------------------------------------");
+    println!("💡 提示: 執行 `cpl recall -i` 可開啟全螢幕雙欄 TUI 圖形選單。");
+    println!("================================================================");
 }
 
 fn copy_to_clipboard(text: &str) {
