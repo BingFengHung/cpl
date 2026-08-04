@@ -36,6 +36,10 @@ fn main() -> Result<()> {
             let count = ingestor::scan_and_ingest(&db, path.as_deref(), *verbose)?;
             println!("✅ 成功索引並更新 {} 筆全新歷史解法！", count);
         }
+        Some(Commands::Stats) => {
+            let stats = db.get_stats()?;
+            ui::render_stats(&stats);
+        }
         Some(Commands::Update { force }) => {
             updater::check_and_update(*force)?;
         }

@@ -1,7 +1,28 @@
 use crate::model::{CodeSnippet, Solution};
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+pub struct ProjectStat {
+    pub path: String,
+    pub count: usize,
+}
+
+pub struct ToolStat {
+    pub name: String,
+    pub count: usize,
+}
+
+pub struct AppStats {
+    pub total_solutions: usize,
+    pub pinned_solutions: usize,
+    pub total_commands: usize,
+    pub total_snippets: usize,
+    pub top_projects: Vec<ProjectStat>,
+    pub top_tools: Vec<ToolStat>,
+    pub top_languages: Vec<ToolStat>,
+}
 
 pub struct Database {
     conn: Connection,
@@ -233,6 +254,100 @@ impl Database {
         let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
         let count: i64 = stmt.query_row(rusqlite_params.as_slice(), |r| r.get(0))?;
         Ok(count as usize)
+    }
+
+    pub fn get_stats(&self) -> Result<AppStats> {
+        let total_solutions = self.get_total_count(None, None, false)?;
+        let pinned_solutions = self.get_total_count(None, None, true)?;
+
+        // Top Projects
+        let mut proj_stmt = self.conn.prepare(
+            "SELECT project_path, COUNT(*) as cnt FROM solutions 
+             WHERE (commands != '[]' OR code_snippets != '[]') 
+             GROUP BY project_path ORDER BY cnt DESC LIMIT 5"
+        )?;
+        let proj_rows = proj_stmt.query_map([], |r| {
+            let path: String = r.get(0)?;
+            let count: i64 = r.get(1)?;
+            Ok(ProjectStat { path, count: count as usize })
+        })?;
+        let mut top_projects = Vec::new();
+        for pr in proj_rows {
+            top_projects.push(pr?);
+        }
+
+        // Aggregate Commands & Languages Frequency
+        let mut all_stmt = self.conn.prepare(
+            "SELECT commands, code_snippets FROM solutions WHERE (commands != '[]' OR code_snippets != '[]')"
+        )?;
+        let mut total_commands = 0;
+        let mut total_snippets = 0;
+        let mut tool_freq: HashMap<String, usize> = HashMap::new();
+        let mut lang_freq: HashMap<String, usize> = HashMap::new();
+
+        let rows = all_stmt.query_map([], |r| {
+            let cmds_json: String = r.get(0)?;
+            let snips_json: String = r.get(1)?;
+            Ok((cmds_json, snips_json))
+        })?;
+
+        for r in rows {
+            let (cmds_json, snips_json) = r?;
+            let cmds: Vec<String> = serde_json::from_str(&cmds_json).unwrap_or_default();
+            let snips: Vec<CodeSnippet> = serde_json::from_str(&snips_json).unwrap_or_default();
+
+            total_commands += cmds.len();
+            total_snippets += snips.len();
+
+            for cmd in cmds {
+                let first_word = cmd
+                    .trim()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_lowercase();
+
+                let tool_name = match first_word.as_str() {
+                    "cargo" | "git" | "docker" | "npm" | "npx" | "kubectl" | "python" | "python3"
+                    | "pip" | "go" | "rustc" | "ffmpeg" | "curl" | "wget" | "cpl" | "gh" | "agy" => {
+                        first_word
+                    }
+                    _ => continue,
+                };
+                *tool_freq.entry(tool_name).or_insert(0) += 1;
+            }
+
+            for snip in snips {
+                let lang = snip.language.to_lowercase();
+                if !lang.is_empty() && lang != "text" {
+                    *lang_freq.entry(lang).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let mut top_tools: Vec<ToolStat> = tool_freq
+            .into_iter()
+            .map(|(name, count)| ToolStat { name, count })
+            .collect();
+        top_tools.sort_by(|a, b| b.count.cmp(&a.count));
+        top_tools.truncate(5);
+
+        let mut top_languages: Vec<ToolStat> = lang_freq
+            .into_iter()
+            .map(|(name, count)| ToolStat { name, count })
+            .collect();
+        top_languages.sort_by(|a, b| b.count.cmp(&a.count));
+        top_languages.truncate(5);
+
+        Ok(AppStats {
+            total_solutions,
+            pinned_solutions,
+            total_commands,
+            total_snippets,
+            top_projects,
+            top_tools,
+            top_languages,
+        })
     }
 
     pub fn toggle_pin(&self, id: i64) -> Result<bool> {

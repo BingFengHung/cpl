@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "cpl",
     author = "Copilot CLI Plus Developer",
-    version = "0.4.1",
+    version = "0.5.0",
     about = "Copilot CLI Plus (cpl): AI Solution Recall, Indexing & Self-Updating CLI Assistant"
 )]
 pub struct Cli {
@@ -55,6 +55,9 @@ pub enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Show developer analytics and AI command usage statistics
+    Stats,
 
     /// Check for updates and self-update to the latest release from GitHub
     Update {

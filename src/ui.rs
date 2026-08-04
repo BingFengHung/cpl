@@ -1,5 +1,5 @@
 use crate::model::Solution;
-use crate::storage::Database;
+use crate::storage::{AppStats, Database};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -299,6 +299,52 @@ pub fn render_text_list(solutions: &[Solution], total_count: usize) {
     println!("\n----------------------------------------------------------------");
     println!("💡 提示: 執行 `cpl recall -t` 可顯示純文字清單。");
     println!("================================================================");
+}
+
+pub fn render_stats(stats: &AppStats) {
+    println!("==================================================================");
+    println!(" 📊 Copilot Plus (cpl) - 開發者 AI 數據與使用儀表板 ");
+    println!("==================================================================");
+    println!(" 💡 索引解法總計 (Indexed Solutions): {} 筆", stats.total_solutions);
+    println!(" ⭐ 星號收藏總計 (Pinned Recipes):    {} 筆", stats.pinned_solutions);
+    println!(" 💻 提取 Shell 指令總數 (CLI Commands): {} 個", stats.total_commands);
+    println!(" 📝 提取程式碼片段數 (Code Snippets):  {} 個", stats.total_snippets);
+    println!("------------------------------------------------------------------");
+
+    println!("\n🔥 【熱門 CLI 指令工具 Top 5】");
+    let max_tool = stats.top_tools.first().map(|t| t.count).unwrap_or(1);
+    if stats.top_tools.is_empty() {
+        println!("  (尚無工具統計)");
+    } else {
+        for (idx, tool) in stats.top_tools.iter().enumerate() {
+            let bar_len = (tool.count * 20) / max_tool;
+            let bar = "█".repeat(bar_len.max(1));
+            println!("  {}. {:<10} {:<20} ({} 次)", idx + 1, tool.name, bar, tool.count);
+        }
+    }
+
+    println!("\n💻 【熱門程式語言類別 Top 5】");
+    let max_lang = stats.top_languages.first().map(|l| l.count).unwrap_or(1);
+    if stats.top_languages.is_empty() {
+        println!("  (尚無語言統計)");
+    } else {
+        for (idx, lang) in stats.top_languages.iter().enumerate() {
+            let bar_len = (lang.count * 20) / max_lang;
+            let bar = "█".repeat(bar_len.max(1));
+            println!("  {}. {:<10} {:<20} ({} 個片段)", idx + 1, lang.name, bar, lang.count);
+        }
+    }
+
+    println!("\n📂 【最常使用 AI 的熱門專案 Top 5】");
+    if stats.top_projects.is_empty() {
+        println!("  (尚無專案統計)");
+    } else {
+        for (idx, proj) in stats.top_projects.iter().enumerate() {
+            println!("  {}. {} ({} 筆對話)", idx + 1, proj.path, proj.count);
+        }
+    }
+
+    println!("==================================================================");
 }
 
 fn copy_to_clipboard(text: &str) {
