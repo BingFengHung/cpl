@@ -45,10 +45,11 @@ fn get_log_directories() -> Vec<PathBuf> {
     let mut dirs_list = Vec::new();
     if let Some(home) = dirs::home_dir() {
         // GitHub Copilot CLI & gh extension standard locations
-        dirs_list.push(home.join(".config").join("github-copilot"));
-        dirs_list.push(home.join(".local").join("share").join("github-copilot"));
+        dirs_list.push(home.join(".copilot"));
         dirs_list.push(home.join(".copilot-cli"));
         dirs_list.push(home.join(".github-copilot"));
+        dirs_list.push(home.join(".config").join("github-copilot"));
+        dirs_list.push(home.join(".local").join("share").join("github-copilot"));
         dirs_list.push(home.join(".config").join("gh"));
         dirs_list.push(home.join(".config").join("gh").join("copilot"));
         dirs_list.push(home.join(".config").join("gh-copilot"));
@@ -58,10 +59,12 @@ fn get_log_directories() -> Vec<PathBuf> {
         dirs_list.push(home.join(".config").join("antigravity-cli"));
         dirs_list.push(home.join(".antigravity"));
 
-        // Windows AppData locations
+        // Windows AppData & UserProfile locations
         if cfg!(target_os = "windows") {
+            dirs_list.push(home.join(".copilot"));
             if let Ok(appdata) = std::env::var("APPDATA") {
                 let appdata_path = PathBuf::from(&appdata);
+                dirs_list.push(appdata_path.join(".copilot"));
                 dirs_list.push(appdata_path.join("github-copilot"));
                 dirs_list.push(appdata_path.join("antigravity-cli"));
                 dirs_list.push(appdata_path.join("GitHub CLI"));
@@ -70,6 +73,7 @@ fn get_log_directories() -> Vec<PathBuf> {
             }
             if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
                 let localappdata_path = PathBuf::from(&localappdata);
+                dirs_list.push(localappdata_path.join(".copilot"));
                 dirs_list.push(localappdata_path.join("github-copilot"));
                 dirs_list.push(localappdata_path.join("antigravity-cli"));
                 dirs_list.push(localappdata_path.join("GitHub CLI"));
