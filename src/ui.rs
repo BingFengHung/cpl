@@ -2,7 +2,7 @@ use crate::model::Solution;
 use crate::storage::Database;
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -63,7 +63,7 @@ pub fn render_results(solutions: &[Solution], db: &Database, interactive: bool) 
     match res {
         Ok(Some(UserAction::CopyCommand(cmd))) => {
             copy_to_clipboard(&cmd);
-            println!("📋 已將指令複製到剪貼簿 (Copied to clipboard):\n   $ {}", cmd);
+            println!("📋 已將內容複製到剪貼簿 (Copied to clipboard):\n   $ {}", cmd);
         }
         _ => {}
     }
@@ -81,6 +81,11 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
     list_state: &mut ListState,
     _db: &Database,
 ) -> io::Result<Option<UserAction>> {
+    // Flush leftover input events in stdin buffer (e.g. the Enter key pressed when launching cpl in CMD)
+    while event::poll(Duration::from_millis(50)).unwrap_or(false) {
+        let _ = event::read();
+    }
+
     loop {
         terminal.draw(|f| {
             let chunks = Layout::default()
@@ -157,13 +162,17 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
             f.render_widget(preview, main_chunks[1]);
 
             // Footer / Keybindings help
-            let footer = Paragraph::new(" [↑/↓] 移動選單  |  [Enter] 複製指令至剪貼簿  |  [q/Esc] 退出 ")
+            let footer = Paragraph::new(" [↑/↓] 移動選單  |  [Enter] 複製指令/內容  |  [q/Esc] 退出 ")
                 .style(Style::default().fg(Color::DarkGray));
             f.render_widget(footer, chunks[2]);
         })?;
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
                     KeyCode::Down | KeyCode::Char('j') => {
@@ -197,10 +206,13 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                             if let Some(sol) = solutions.get(idx) {
                                 if let Some(cmd) = sol.commands.first() {
                                     return Ok(Some(UserAction::CopyCommand(cmd.clone())));
+                                } else if let Some(snip) = sol.code_snippets.first() {
+                                    return Ok(Some(UserAction::CopyCommand(snip.code.clone())));
+                                } else {
+                                    return Ok(Some(UserAction::CopyCommand(sol.prompt_summary.clone())));
                                 }
                             }
                         }
-                        return Ok(None);
                     }
                     _ => {}
                 }
