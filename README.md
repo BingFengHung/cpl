@@ -1,5 +1,7 @@
 # 🚀 cpl (Copilot Plus): AI Solution Recall & Instant Indexing CLI
 
+[English](README.md) | [繁體中文](README_ZH.md)
+
 > **Zero Cold-Start local AI memory database & self-updating assistant for Copilot CLI users.**
 
 `cpl` is a blazingly fast CLI tool written in Rust that automatically indexes past GitHub Copilot CLI transcript logs into a local SQLite FTS5 database, allowing you to instantly recall, search, and execute past AI-generated commands and code snippets without re-prompting or copy-pasting.
