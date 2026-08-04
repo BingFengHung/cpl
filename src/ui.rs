@@ -16,28 +16,37 @@ use ratatui::{
 use std::io;
 use std::time::Duration;
 
-pub fn render_results(solutions: &[Solution], db: &Database, interactive: bool) -> Result<()> {
-    if solutions.is_empty() {
+pub fn render_results(
+    initial_solutions: &[Solution],
+    db: &Database,
+    interactive: bool,
+    project_filter: Option<&str>,
+    pinned_only: bool,
+    initial_query: Option<&str>,
+) -> Result<()> {
+    let total_matched = db.get_total_count(initial_query, project_filter, pinned_only)?;
+
+    if total_matched == 0 {
         println!("🔍 尚無符合的 AI 對話歷史紀錄 (No past solutions found matching your query).");
         println!("💡 提示: 可執行 `cpl scan --reindex` 重新掃描本機 Copilot/AGY CLI 日誌。");
         return Ok(());
     }
 
     if !interactive {
-        render_text_list(solutions);
+        render_text_list(initial_solutions, total_matched);
         return Ok(());
     }
 
-    // Interactive TUI rendering
+    // Interactive TUI rendering with Dynamic Lazy Loading
     if enable_raw_mode().is_err() {
-        render_text_list(solutions);
+        render_text_list(initial_solutions, total_matched);
         return Ok(());
     }
 
     let mut stdout = io::stdout();
     if execute!(stdout, EnterAlternateScreen).is_err() {
         let _ = disable_raw_mode();
-        render_text_list(solutions);
+        render_text_list(initial_solutions, total_matched);
         return Ok(());
     }
 
@@ -46,7 +55,7 @@ pub fn render_results(solutions: &[Solution], db: &Database, interactive: bool) 
         Ok(t) => t,
         Err(_) => {
             let _ = disable_raw_mode();
-            render_text_list(solutions);
+            render_text_list(initial_solutions, total_matched);
             return Ok(());
         }
     };
@@ -54,7 +63,14 @@ pub fn render_results(solutions: &[Solution], db: &Database, interactive: bool) 
     let mut list_state = ListState::default();
     list_state.select(Some(0));
 
-    let res = run_tui_loop(&mut terminal, solutions, &mut list_state, db);
+    let res = run_tui_loop(
+        &mut terminal,
+        db,
+        &mut list_state,
+        project_filter,
+        pinned_only,
+        initial_query,
+    );
 
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
@@ -77,42 +93,39 @@ enum UserAction {
 
 fn run_tui_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
-    all_solutions: &[Solution],
+    db: &Database,
     list_state: &mut ListState,
-    _db: &Database,
+    project_filter: Option<&str>,
+    pinned_only: bool,
+    initial_query: Option<&str>,
 ) -> io::Result<Option<UserAction>> {
-    let mut search_query = String::new();
-    let mut filtered_solutions: Vec<Solution> = all_solutions.to_vec();
+    let mut search_query = initial_query.unwrap_or("").to_string();
+    let mut solutions: Vec<Solution> = Vec::new();
+    let mut total_matched = 0;
+    let mut query_changed = true;
 
-    // Flush leftover input events in stdin buffer (e.g. the Enter key pressed when launching cpl in CMD)
+    // Flush leftover input events in stdin buffer
     while event::poll(Duration::from_millis(50)).unwrap_or(false) {
         let _ = event::read();
     }
 
     loop {
-        let current_query = search_query.to_lowercase();
-        filtered_solutions = if current_query.is_empty() {
-            all_solutions.to_vec()
-        } else {
-            all_solutions
-                .iter()
-                .filter(|s| {
-                    s.prompt_summary.to_lowercase().contains(&current_query)
-                        || s.commands.iter().any(|c| c.to_lowercase().contains(&current_query))
-                        || s.code_snippets.iter().any(|snip| snip.code.to_lowercase().contains(&current_query))
-                })
-                .cloned()
-                .collect()
-        };
+        // Re-query database dynamically when search query changes
+        if query_changed {
+            let q_param = if search_query.trim().is_empty() {
+                None
+            } else {
+                Some(search_query.as_str())
+            };
+            total_matched = db.get_total_count(q_param, project_filter, pinned_only).unwrap_or(0);
+            solutions = db.search_paged(q_param, project_filter, pinned_only, 0, 50).unwrap_or_default();
+            query_changed = false;
 
-        if list_state.selected().map_or(false, |i| i >= filtered_solutions.len()) {
-            if filtered_solutions.is_empty() {
+            if solutions.is_empty() {
                 list_state.select(None);
             } else {
                 list_state.select(Some(0));
             }
-        } else if list_state.selected().is_none() && !filtered_solutions.is_empty() {
-            list_state.select(Some(0));
         }
 
         terminal.draw(|f| {
@@ -121,15 +134,14 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                 .constraints([Constraint::Length(3), Constraint::Min(10), Constraint::Length(3)].as_ref())
                 .split(f.size());
 
-            // Top Search Input Box
+            // Header with total count indicator
             let header = Paragraph::new(format!(
-                " 🔍 搜尋 (Search): {}_  (符合 {} / {} 筆, Enter: 複製, Esc: 離開)",
+                " 🔍 搜尋 (Search): {}_  (符合 {} 筆紀錄, Enter: 複製, Esc: 離開)",
                 search_query,
-                filtered_solutions.len(),
-                all_solutions.len()
+                total_matched
             ))
             .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-            .block(Block::default().borders(Borders::ALL).title(" Copilot Plus - 即時搜尋 "));
+            .block(Block::default().borders(Borders::ALL).title(" Copilot Plus - 動態全庫搜尋 "));
             f.render_widget(header, chunks[0]);
 
             // Main dual-pane view
@@ -139,7 +151,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                 .split(chunks[1]);
 
             // Left List items
-            let items: Vec<ListItem> = filtered_solutions
+            let items: Vec<ListItem> = solutions
                 .iter()
                 .map(|s| {
                     let pin_icon = if s.is_pinned { "⭐ " } else { "  " };
@@ -162,7 +174,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
 
             // Right Preview Pane
             let selected_idx = list_state.selected().unwrap_or(0);
-            let preview_text = if let Some(sol) = filtered_solutions.get(selected_idx) {
+            let preview_text = if let Some(sol) = solutions.get(selected_idx) {
                 let mut text = format!(
                     "📅 時間: {}\n📂 路徑: {}\n\n💡 執行的關鍵指令:\n",
                     sol.formatted_date(),
@@ -192,7 +204,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
             f.render_widget(preview, main_chunks[1]);
 
             // Footer / Keybindings help
-            let footer = Paragraph::new(" [直接打字] 即時過濾  |  [↑/↓] 移動選單  |  [Backspace] 刪除  |  [Enter] 複製指令  |  [Esc] 退出 ")
+            let footer = Paragraph::new(" [打字] 即時搜尋  |  [↑/↓] 動態捲動  |  [Backspace] 刪除  |  [Enter] 複製指令  |  [Esc] 退出 ")
                 .style(Style::default().fg(Color::DarkGray));
             f.render_widget(footer, chunks[2]);
         })?;
@@ -207,41 +219,44 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                     KeyCode::Esc => return Ok(None),
                     KeyCode::Backspace => {
                         search_query.pop();
-                        list_state.select(Some(0));
+                        query_changed = true;
                     }
                     KeyCode::Down => {
-                        let i = match list_state.selected() {
-                            Some(i) => {
-                                if filtered_solutions.is_empty() {
-                                    0
-                                } else if i >= filtered_solutions.len().saturating_sub(1) {
-                                    0
+                        if let Some(i) = list_state.selected() {
+                            let next_idx = i + 1;
+                            // Dynamic Infinite Scroll: Lazy load next chunk when approaching end
+                            if next_idx + 5 >= solutions.len() && solutions.len() < total_matched {
+                                let q_param = if search_query.trim().is_empty() {
+                                    None
                                 } else {
-                                    i + 1
+                                    Some(search_query.as_str())
+                                };
+                                if let Ok(mut more) = db.search_paged(
+                                    q_param,
+                                    project_filter,
+                                    pinned_only,
+                                    solutions.len(),
+                                    50,
+                                ) {
+                                    solutions.append(&mut more);
                                 }
                             }
-                            None => 0,
-                        };
-                        list_state.select(Some(i));
+
+                            if next_idx < solutions.len() {
+                                list_state.select(Some(next_idx));
+                            }
+                        }
                     }
                     KeyCode::Up => {
-                        let i = match list_state.selected() {
-                            Some(i) => {
-                                if filtered_solutions.is_empty() {
-                                    0
-                                } else if i == 0 {
-                                    filtered_solutions.len().saturating_sub(1)
-                                } else {
-                                    i - 1
-                                }
+                        if let Some(i) = list_state.selected() {
+                            if i > 0 {
+                                list_state.select(Some(i - 1));
                             }
-                            None => 0,
-                        };
-                        list_state.select(Some(i));
+                        }
                     }
                     KeyCode::Enter => {
                         if let Some(idx) = list_state.selected() {
-                            if let Some(sol) = filtered_solutions.get(idx) {
+                            if let Some(sol) = solutions.get(idx) {
                                 if let Some(cmd) = sol.commands.first() {
                                     return Ok(Some(UserAction::CopyCommand(cmd.clone())));
                                 } else if let Some(snip) = sol.code_snippets.first() {
@@ -254,7 +269,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                     }
                     KeyCode::Char(c) => {
                         search_query.push(c);
-                        list_state.select(Some(0));
+                        query_changed = true;
                     }
                     _ => {}
                 }
@@ -263,9 +278,9 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
     }
 }
 
-pub fn render_text_list(solutions: &[Solution]) {
+pub fn render_text_list(solutions: &[Solution], total_count: usize) {
     println!("================================================================");
-    println!(" 🔍 cpl recall - 歷史 AI 對話與解法紀錄 (共 {} 筆解法)", solutions.len());
+    println!(" 🔍 cpl recall - 歷史 AI 對話與解法紀錄 (共符合 {} 筆解法)", total_count);
     println!("================================================================");
 
     for (idx, sol) in solutions.iter().enumerate().take(15) {

@@ -21,7 +21,6 @@ fn main() -> Result<()> {
 
     match &cli.command {
         Some(Commands::Recall { query, local, pinned, text }) => {
-            // Default to interactive TUI menu (interactive = true) unless --text is passed
             let interactive = !(*text);
             handle_recall(&db, query.as_deref(), *local, *pinned, interactive)?;
         }
@@ -61,8 +60,8 @@ fn handle_recall(db: &Database, query: Option<&str>, local_only: bool, pinned: b
         None
     };
 
-    let solutions = db.search(query, project_filter.as_deref(), pinned)?;
-    ui::render_results(&solutions, db, interactive)?;
+    let initial_solutions = db.search_paged(query, project_filter.as_deref(), pinned, 0, 50)?;
+    ui::render_results(&initial_solutions, db, interactive, project_filter.as_deref(), pinned, query)?;
     Ok(())
 }
 

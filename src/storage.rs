@@ -129,11 +129,13 @@ impl Database {
         Ok(inserted)
     }
 
-    pub fn search(
+    pub fn search_paged(
         &self,
         query: Option<&str>,
         project_path: Option<&str>,
         pinned_only: bool,
+        offset: usize,
+        limit: usize,
     ) -> Result<Vec<Solution>> {
         let mut sql = String::from(
             "SELECT id, prompt_summary, commands, code_snippets, project_path, git_repo, is_pinned, timestamp FROM solutions WHERE 1=1"
@@ -159,8 +161,9 @@ impl Database {
             }
         }
 
-        // Limit results to top 2000 for instant UI rendering across entire history
-        sql.push_str(" ORDER BY timestamp DESC LIMIT 2000");
+        sql.push_str(" ORDER BY timestamp DESC LIMIT ? OFFSET ?");
+        params_vec.push(Box::new(limit as i64));
+        params_vec.push(Box::new(offset as i64));
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
@@ -195,6 +198,35 @@ impl Database {
             solutions.push(r?);
         }
         Ok(solutions)
+    }
+
+    pub fn get_total_count(&self, query: Option<&str>, project_path: Option<&str>, pinned_only: bool) -> Result<usize> {
+        let mut sql = String::from("SELECT COUNT(*) FROM solutions WHERE 1=1");
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if pinned_only {
+            sql.push_str(" AND is_pinned = 1");
+        }
+
+        if let Some(path) = project_path {
+            sql.push_str(" AND project_path = ?");
+            params_vec.push(Box::new(path.to_string()));
+        }
+
+        if let Some(q) = query {
+            if !q.trim().is_empty() {
+                sql.push_str(" AND (prompt_summary LIKE ? OR commands LIKE ? OR code_snippets LIKE ?)");
+                let pattern = format!("%{}%", q.trim());
+                params_vec.push(Box::new(pattern.clone()));
+                params_vec.push(Box::new(pattern.clone()));
+                params_vec.push(Box::new(pattern.clone()));
+            }
+        }
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = stmt.query_row(rusqlite_params.as_slice(), |r| r.get(0))?;
+        Ok(count as usize)
     }
 
     pub fn toggle_pin(&self, id: i64) -> Result<bool> {
