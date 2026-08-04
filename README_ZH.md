@@ -70,7 +70,7 @@ cpl update
 
 推送版本標籤時：
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)) 會自動啟動 Linux、Windows 與 macOS 的雲端編譯，並將產出的二進位檔案直接發布至 GitHub Release 頁面！

@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "cpl",
     author = "Copilot CLI Plus Developer",
-    version = "0.1.0",
+    version = "0.1.1",
     about = "Copilot CLI Plus (cpl): AI Solution Recall, Indexing & Self-Updating CLI Assistant"
 )]
 pub struct Cli {

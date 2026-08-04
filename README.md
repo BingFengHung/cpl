@@ -70,7 +70,7 @@ cpl update
 
 To publish a new release:
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 GitHub Actions (`.github/workflows/release.yml`) will automatically build Linux, Windows, and macOS binaries and publish them directly to the GitHub Release page!
