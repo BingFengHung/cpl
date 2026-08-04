@@ -159,8 +159,8 @@ impl Database {
             }
         }
 
-        // Limit results to top 100 for instant UI rendering
-        sql.push_str(" ORDER BY timestamp DESC LIMIT 100");
+        // Limit results to top 2000 for instant UI rendering across entire history
+        sql.push_str(" ORDER BY timestamp DESC LIMIT 2000");
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
