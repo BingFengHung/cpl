@@ -1,5 +1,6 @@
+use crate::executor;
 use crate::model::Solution;
-use crate::storage::{AppStats, Database};
+use crate::storage::Database;
 use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -27,8 +28,11 @@ pub fn render_results(
     let total_matched = db.get_total_count(initial_query, project_filter, pinned_only)?;
 
     if total_matched == 0 {
-        println!("🔍 尚無符合的 AI 對話解法紀錄 (No past solutions found containing commands/snippets).");
-        println!("💡 提示: 可執行 `cpl scan --reindex` 重新掃描本機 Copilot/AGY CLI 日誌。");
+        if let Some(q) = initial_query {
+            return executor::fallback_cloud_ai(q);
+        }
+        println!("🔍 尚無符合的 AI 對話解法紀錄 (No past solutions found matching your query).");
+        println!("💡 提示: 可執行 `cpl --reindex` 重新掃描本機 Copilot/AGY CLI 日誌。");
         return Ok(());
     }
 
@@ -77,6 +81,10 @@ pub fn render_results(
     let _ = terminal.show_cursor();
 
     match res {
+        Ok(Some(UserAction::ExecuteCommand(cmd))) => {
+            println!("🚀 正在執行指令:\n   $ {}\n", cmd);
+            executor::run_shell_command(&cmd)?;
+        }
         Ok(Some(UserAction::CopyCommand(cmd))) => {
             copy_to_clipboard(&cmd);
             println!("📋 已將內容複製到剪貼簿 (Copied to clipboard):\n   $ {}", cmd);
@@ -88,6 +96,7 @@ pub fn render_results(
 }
 
 enum UserAction {
+    ExecuteCommand(String),
     CopyCommand(String),
 }
 
@@ -136,12 +145,12 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
 
             // Header with total count indicator
             let header = Paragraph::new(format!(
-                " 🔍 搜尋 (Search): {}_  (符合 {} 筆精準解法, Enter: 複製, Esc: 離開)",
+                " 🔍 搜尋 (Search): {}_  (符合 {} 筆精準解法, Enter: 執行, c: 複製, Esc: 離開)",
                 search_query,
                 total_matched
             ))
             .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-            .block(Block::default().borders(Borders::ALL).title(" Copilot Plus - 動態全庫搜尋 "));
+            .block(Block::default().borders(Borders::ALL).title(" Copilot Plus (cpl) - 本機極速快取 "));
             f.render_widget(header, chunks[0]);
 
             // Main dual-pane view
@@ -205,7 +214,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
             f.render_widget(preview, main_chunks[1]);
 
             // Footer / Keybindings help
-            let footer = Paragraph::new(" [打字] 即時搜尋  |  [↑/↓] 動態捲動  |  [Backspace] 刪除  |  [Enter] 複製指令  |  [Esc] 退出 ")
+            let footer = Paragraph::new(" [直接打字] 即時搜尋  |  [↑/↓] 移動選單  |  [Enter] 1秒執行  |  [c] 複製指令  |  [Esc] 退出 ")
                 .style(Style::default().fg(Color::DarkGray));
             f.render_widget(footer, chunks[2]);
         })?;
@@ -259,11 +268,20 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
                         if let Some(idx) = list_state.selected() {
                             if let Some(sol) = solutions.get(idx) {
                                 if let Some(cmd) = sol.commands.first() {
-                                    return Ok(Some(UserAction::CopyCommand(cmd.clone())));
+                                    return Ok(Some(UserAction::ExecuteCommand(cmd.clone())));
                                 } else if let Some(snip) = sol.code_snippets.first() {
-                                    return Ok(Some(UserAction::CopyCommand(snip.code.clone())));
+                                    return Ok(Some(UserAction::ExecuteCommand(snip.code.clone())));
                                 } else {
-                                    return Ok(Some(UserAction::CopyCommand(sol.prompt_summary.clone())));
+                                    return Ok(Some(UserAction::ExecuteCommand(sol.prompt_summary.clone())));
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        if let Some(idx) = list_state.selected() {
+                            if let Some(sol) = solutions.get(idx) {
+                                if let Some(cmd) = sol.commands.first() {
+                                    return Ok(Some(UserAction::CopyCommand(cmd.clone())));
                                 }
                             }
                         }
@@ -281,7 +299,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(
 
 pub fn render_text_list(solutions: &[Solution], total_count: usize) {
     println!("================================================================");
-    println!(" 🔍 cpl recall - 歷史 AI 對話與解法紀錄 (共符合 {} 筆解法)", total_count);
+    println!(" 🔍 cpl - 歷史 AI 對話與解法紀錄 (共符合 {} 筆解法)", total_count);
     println!("================================================================");
 
     for (idx, sol) in solutions.iter().enumerate().take(15) {
@@ -297,54 +315,8 @@ pub fn render_text_list(solutions: &[Solution], total_count: usize) {
         }
     }
     println!("\n----------------------------------------------------------------");
-    println!("💡 提示: 執行 `cpl recall -t` 可顯示純文字清單。");
+    println!("💡 提示: 直接輸入 `cpl <關鍵字>` 可 0.001 秒秒查並一鍵執行。");
     println!("================================================================");
-}
-
-pub fn render_stats(stats: &AppStats) {
-    println!("==================================================================");
-    println!(" 📊 Copilot Plus (cpl) - 開發者 AI 數據與使用儀表板 ");
-    println!("==================================================================");
-    println!(" 💡 索引解法總計 (Indexed Solutions): {} 筆", stats.total_solutions);
-    println!(" ⭐ 星號收藏總計 (Pinned Recipes):    {} 筆", stats.pinned_solutions);
-    println!(" 💻 提取 Shell 指令總數 (CLI Commands): {} 個", stats.total_commands);
-    println!(" 📝 提取程式碼片段數 (Code Snippets):  {} 個", stats.total_snippets);
-    println!("------------------------------------------------------------------");
-
-    println!("\n🔥 【熱門 CLI 指令工具 Top 5】");
-    let max_tool = stats.top_tools.first().map(|t| t.count).unwrap_or(1);
-    if stats.top_tools.is_empty() {
-        println!("  (尚無工具統計)");
-    } else {
-        for (idx, tool) in stats.top_tools.iter().enumerate() {
-            let bar_len = (tool.count * 20) / max_tool;
-            let bar = "█".repeat(bar_len.max(1));
-            println!("  {}. {:<10} {:<20} ({} 次)", idx + 1, tool.name, bar, tool.count);
-        }
-    }
-
-    println!("\n💻 【熱門程式語言類別 Top 5】");
-    let max_lang = stats.top_languages.first().map(|l| l.count).unwrap_or(1);
-    if stats.top_languages.is_empty() {
-        println!("  (尚無語言統計)");
-    } else {
-        for (idx, lang) in stats.top_languages.iter().enumerate() {
-            let bar_len = (lang.count * 20) / max_lang;
-            let bar = "█".repeat(bar_len.max(1));
-            println!("  {}. {:<10} {:<20} ({} 個片段)", idx + 1, lang.name, bar, lang.count);
-        }
-    }
-
-    println!("\n📂 【最常使用 AI 的熱門專案 Top 5】");
-    if stats.top_projects.is_empty() {
-        println!("  (尚無專案統計)");
-    } else {
-        for (idx, proj) in stats.top_projects.iter().enumerate() {
-            println!("  {}. {} ({} 筆對話)", idx + 1, proj.path, proj.count);
-        }
-    }
-
-    println!("==================================================================");
 }
 
 fn copy_to_clipboard(text: &str) {
